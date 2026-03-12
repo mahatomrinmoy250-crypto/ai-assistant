@@ -795,18 +795,26 @@ KB_TOOL_DEFINITIONS = [
 MESSAGING_TOOL_DEFINITIONS = [
     # ── WhatsApp ──
     {
-        "name": "whatsapp_connect",
+        "name": "whatsapp_start_monitor",
         "description": (
-            "Connect to WhatsApp Web. Opens a browser window — "
-            "scan the QR code with your phone on first use. "
-            "Session is saved so subsequent calls don't need QR."
+            "Connect to WhatsApp Web AND start continuous auto-reply. "
+            "First run: opens browser, shows QR code — user scans ONCE with phone. "
+            "Session is permanently saved — no QR needed on next run. "
+            "After connection, monitors for new messages every N seconds and "
+            "auto-replies using knowledge base + Claude. THIS IS THE PRIMARY WHATSAPP COMMAND. "
+            "Use this when user says 'start WhatsApp', 'connect WhatsApp', 'auto-reply WhatsApp'."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
+                "interval": {
+                    "type": "integer",
+                    "description": "Seconds between message checks (default: 15)",
+                    "default": 15
+                },
                 "headless": {
                     "type": "boolean",
-                    "description": "Run browser in background (headless). Default false so you can see the QR code.",
+                    "description": "Hide browser window. Set false (default) so QR code is visible.",
                     "default": False
                 }
             },
@@ -814,31 +822,50 @@ MESSAGING_TOOL_DEFINITIONS = [
         }
     },
     {
-        "name": "whatsapp_get_messages",
+        "name": "whatsapp_stop_monitor",
+        "description": "Stop WhatsApp auto-reply monitoring.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "whatsapp_status",
+        "description": "Check WhatsApp connection and auto-reply status, stats.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "whatsapp_connect",
         "description": (
-            "Get unread WhatsApp messages from all chats. "
-            "Returns contact names and their recent messages."
+            "Connect to WhatsApp Web WITHOUT starting auto-reply. "
+            "Use for manual read/send operations. "
+            "Prefer whatsapp_start_monitor for full auto-reply."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Max number of unread chats to fetch (default: 10)"
-                }
+                "headless": {"type": "boolean", "default": False}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "whatsapp_get_messages",
+        "description": "Get list of unread WhatsApp chats (requires connection).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max unread chats (default: 10)"}
             },
             "required": []
         }
     },
     {
         "name": "whatsapp_send",
-        "description": "Send a WhatsApp message to a specific contact.",
+        "description": "Send a WhatsApp message to a specific contact (requires connection).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "contact": {
                     "type": "string",
-                    "description": "Contact name exactly as it appears in WhatsApp"
+                    "description": "Contact name as it appears in WhatsApp"
                 },
                 "message": {
                     "type": "string",
@@ -976,13 +1003,12 @@ MESSAGING_TOOL_DEFINITIONS = [
             "required": ["post_url", "comment"]
         }
     },
-    # ── Auto-reply ──
+    # ── Auto-reply (multi-platform) ──
     {
         "name": "start_auto_reply",
         "description": (
-            "Start background auto-reply monitoring for WhatsApp and/or Gmail. "
-            "JARVIS will check for new messages every N seconds and reply using "
-            "knowledge base data. Perfect for handling customer queries automatically."
+            "Start auto-reply for Gmail and/or WhatsApp together. "
+            "For WhatsApp-only, prefer whatsapp_start_monitor instead."
         ),
         "input_schema": {
             "type": "object",
@@ -990,11 +1016,11 @@ MESSAGING_TOOL_DEFINITIONS = [
                 "platforms": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["whatsapp", "gmail"]},
-                    "description": "Which platforms to monitor"
+                    "description": "Platforms to monitor"
                 },
                 "check_interval": {
                     "type": "integer",
-                    "description": "Seconds between checks (default: 30)"
+                    "description": "Seconds between checks (default: 15)"
                 }
             },
             "required": ["platforms"]
@@ -1002,12 +1028,13 @@ MESSAGING_TOOL_DEFINITIONS = [
     },
     {
         "name": "stop_auto_reply",
-        "description": "Stop the auto-reply monitor.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "description": "Stop all auto-reply monitors (WhatsApp + Gmail).",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "auto_reply_status",
+        "description": "Check status and stats of all running auto-reply monitors.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
     },
     {
         "name": "get_auto_reply_log",
@@ -1053,30 +1080,83 @@ def kb_bulk_store(entries: list) -> dict:
 
 # ──────────────────── Messaging implementations ───────────────────────────
 
+def _get_agent():
+    """Get the running JARVISAgent from main module (avoids circular import)."""
+    import sys
+    main_mod = sys.modules.get("__main__")
+    if main_mod and hasattr(main_mod, "jarvis") and hasattr(main_mod.jarvis, "agent"):
+        return main_mod.jarvis.agent
+    return None
+
 def whatsapp_connect(headless: bool = False) -> dict:
+    """Connect only — no auto-reply. For manual send/read."""
     try:
-        from integrations.whatsapp import init_whatsapp
-        return init_whatsapp(headless=headless)
+        from integrations.whatsapp import init_whatsapp_client
+        return init_whatsapp_client(headless=headless)
     except ImportError as e:
+        return {"error": str(e)}
+
+def whatsapp_start_monitor(interval: int = 15, headless: bool = False) -> dict:
+    """
+    Connect to WhatsApp (QR scan once → session saved forever) and
+    start continuous auto-reply. Monitors every `interval` seconds.
+    Replies are generated using KB data + Claude.
+    """
+    try:
+        from integrations.whatsapp import start_wa_autoreply
+        from integrations.monitor import make_reply_fn
+        from memory_db import get_kb
+
+        agent = _get_agent()
+        if not agent:
+            return {"error": "JARVIS agent not found. Run from main.py."}
+
+        reply_fn = make_reply_fn(agent, get_kb())
+        return start_wa_autoreply(reply_fn=reply_fn, interval=interval, headless=headless)
+    except Exception as e:
+        return {"error": str(e)}
+
+def whatsapp_stop_monitor() -> dict:
+    try:
+        from integrations.whatsapp import stop_wa_autoreply
+        return stop_wa_autoreply()
+    except Exception as e:
+        return {"error": str(e)}
+
+def whatsapp_status() -> dict:
+    try:
+        from integrations.whatsapp import get_whatsapp_service, get_whatsapp_client
+        svc = get_whatsapp_service()
+        if svc:
+            return {"running": True, **svc.get_stats()}
+        cli = get_whatsapp_client()
+        if cli and cli.is_connected():
+            return {"running": False, "connected": True, "message": "Connected but auto-reply is off"}
+        return {"running": False, "connected": False}
+    except Exception as e:
         return {"error": str(e)}
 
 def whatsapp_get_messages(limit: int = 10) -> dict:
     try:
-        from integrations.whatsapp import get_whatsapp_client
-        wa = get_whatsapp_client()
-        if not wa:
-            return {"error": "WhatsApp not connected. Call whatsapp_connect first."}
-        return wa.get_unread_messages(limit=limit)
+        from integrations.whatsapp import get_whatsapp_client, get_whatsapp_service
+        # Use whichever client is active
+        svc = get_whatsapp_service()
+        client = svc.client if svc else get_whatsapp_client()
+        if not client or not client.is_connected():
+            return {"error": "WhatsApp not connected. Say 'connect WhatsApp' first."}
+        unread = client.get_unread_chats(limit=limit)
+        return {"unread_chats": unread, "count": len(unread)}
     except Exception as e:
         return {"error": str(e)}
 
 def whatsapp_send(contact: str, message: str) -> dict:
     try:
-        from integrations.whatsapp import get_whatsapp_client
-        wa = get_whatsapp_client()
-        if not wa:
-            return {"error": "WhatsApp not connected. Call whatsapp_connect first."}
-        return wa.send_message(contact, message)
+        from integrations.whatsapp import get_whatsapp_client, get_whatsapp_service
+        svc = get_whatsapp_service()
+        client = svc.client if svc else get_whatsapp_client()
+        if not client or not client.is_connected():
+            return {"error": "WhatsApp not connected. Say 'connect WhatsApp' first."}
+        return client.send_to_contact(contact, message)
     except Exception as e:
         return {"error": str(e)}
 
@@ -1138,34 +1218,44 @@ def facebook_comment(post_url: str, comment: str) -> dict:
 # Global monitor instance
 _monitor = None
 
-def start_auto_reply(platforms: list, check_interval: int = 30) -> dict:
+def start_auto_reply(platforms: list, check_interval: int = 15) -> dict:
+    """
+    Start auto-reply for specified platforms.
+    - whatsapp: uses persistent session (QR once), monitors continuously
+    - gmail:    polls inbox every check_interval seconds
+    """
     global _monitor
     try:
         from integrations.monitor import AutoReplyMonitor
         from memory_db import get_kb
-        # Import agent lazily to avoid circular import
-        import sys
-        agent = None
-        # Try to get the running agent from main module
-        main_mod = sys.modules.get("__main__")
-        if main_mod and hasattr(main_mod, "jarvis") and hasattr(main_mod.jarvis, "agent"):
-            agent = main_mod.jarvis.agent
 
+        agent = _get_agent()
         if not agent:
-            return {"error": "Could not access JARVIS agent for reply generation. Run from main.py."}
+            return {"error": "Could not access JARVIS agent. Run from main.py."}
 
-        _monitor = AutoReplyMonitor(agent=agent, kb=get_kb(), check_interval=check_interval)
-        return _monitor.start(platforms=platforms)
+        _monitor = AutoReplyMonitor(agent=agent, kb=get_kb())
+        return _monitor.start(platforms=platforms, interval=check_interval)
     except Exception as e:
         return {"error": str(e)}
 
 def stop_auto_reply() -> dict:
     global _monitor
     if not _monitor:
-        return {"error": "Auto-reply monitor is not running"}
+        # Also try stopping WA directly
+        try:
+            from integrations.whatsapp import stop_wa_autoreply
+            return stop_wa_autoreply()
+        except Exception:
+            return {"error": "Auto-reply monitor is not running"}
     result = _monitor.stop()
     _monitor = None
     return result
+
+def auto_reply_status() -> dict:
+    global _monitor
+    if not _monitor:
+        return {"running": False, "message": "No auto-reply monitor active"}
+    return _monitor.get_status()
 
 def get_auto_reply_log(limit: int = 20) -> dict:
     global _monitor
@@ -1201,7 +1291,11 @@ def execute_tool(tool_name: str, tool_input: dict) -> Any:
         "kb_list": lambda i: kb_list(i.get("category")),
         "kb_delete": lambda i: kb_delete(i["category"], i["key"]),
         "kb_bulk_store": lambda i: kb_bulk_store(i["entries"]),
-        # WhatsApp
+        # WhatsApp — persistent monitor (primary)
+        "whatsapp_start_monitor": lambda i: whatsapp_start_monitor(i.get("interval", 15), i.get("headless", False)),
+        "whatsapp_stop_monitor": lambda i: whatsapp_stop_monitor(),
+        "whatsapp_status": lambda i: whatsapp_status(),
+        # WhatsApp — manual
         "whatsapp_connect": lambda i: whatsapp_connect(i.get("headless", False)),
         "whatsapp_get_messages": lambda i: whatsapp_get_messages(i.get("limit", 10)),
         "whatsapp_send": lambda i: whatsapp_send(i["contact"], i["message"]),
@@ -1214,10 +1308,11 @@ def execute_tool(tool_name: str, tool_input: dict) -> Any:
         "facebook_connect": lambda i: facebook_connect(i.get("headless", False)),
         "facebook_post": lambda i: facebook_post(i["text"], i.get("url")),
         "facebook_comment": lambda i: facebook_comment(i["post_url"], i["comment"]),
-        # Auto-reply
-        "start_auto_reply": lambda i: start_auto_reply(i["platforms"], i.get("check_interval", 30)),
+        # Auto-reply (WA + Gmail combined)
+        "start_auto_reply": lambda i: start_auto_reply(i["platforms"], i.get("check_interval", 15)),
         "stop_auto_reply": lambda i: stop_auto_reply(),
         "get_auto_reply_log": lambda i: get_auto_reply_log(i.get("limit", 20)),
+        "auto_reply_status": lambda i: auto_reply_status(),
     }
 
     handler = handlers.get(tool_name)

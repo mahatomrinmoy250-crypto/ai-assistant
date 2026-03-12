@@ -74,6 +74,9 @@ HELP_TEXT = """
   [cyan]voice on/off[/cyan]  Toggle voice output
   [cyan]listen[/cyan]        Listen for voice input (one-shot)
   [cyan]wake[/cyan]          Enable wake-word mode ("JARVIS")
+  [cyan]wa[/cyan]            Start WhatsApp auto-reply monitor
+  [cyan]wa stop[/cyan]       Stop WhatsApp auto-reply monitor
+  [cyan]wa status[/cyan]     Show WhatsApp monitor status
   [cyan]quit / exit[/cyan]   Shut down JARVIS
 
 [bold]What JARVIS can do:[/bold]
@@ -87,18 +90,17 @@ HELP_TEXT = """
   • Save and recall notes
   • Open applications
   • Browse webpages
+  • Auto-reply to WhatsApp messages using your knowledge base
+  • Read & reply to Gmail
+  • Post and comment on Facebook
 
 [bold]Example prompts:[/bold]
   "What's the weather like in New York?"
   "Search for the latest news on AI"
-  "What time is it?"
-  "How much RAM am I using?"
-  "Calculate 2^32 divided by 1000"
-  "Save a note: meeting at 3pm tomorrow"
-  "Set a timer for 5 minutes"
-  "Read my notes"
-  "List files in my home directory"
-  "Open a web browser"
+  "Remember that iPhone 15 costs $999"
+  "Start auto-replying to WhatsApp"
+  "Check my unread emails"
+  "Post to Facebook: New products arrived!"
 """
 
 
@@ -258,7 +260,62 @@ class JARVISInterface:
             self._wake_word_mode()
             return True
 
+        # WhatsApp monitor shortcuts
+        if cmd_lower == "wa":
+            self._wa_start()
+            return True
+
+        if cmd_lower == "wa stop":
+            self._wa_stop()
+            return True
+
+        if cmd_lower == "wa status":
+            self._wa_status()
+            return True
+
         return False
+
+    def _wa_start(self):
+        """Start WhatsApp auto-reply monitor."""
+        console.print("[cyan]Starting WhatsApp auto-reply monitor...[/cyan]")
+        console.print("[dim]A browser window will open. Scan the QR code if prompted.[/dim]")
+        try:
+            from tools import execute_tool
+            result = execute_tool("whatsapp_start_monitor", {"interval": 15, "headless": False})
+            if result.get("status") == "already_running":
+                console.print("[yellow]WhatsApp monitor is already running.[/yellow]")
+            elif result.get("status") in ("started", "session_restored"):
+                console.print(f"[green]✓ {result.get('message', 'WhatsApp monitor started.')}[/green]")
+                console.print("[dim]JARVIS will auto-reply to incoming WhatsApp messages using your knowledge base.[/dim]")
+            else:
+                console.print(f"[red]Error: {result.get('error', result)}[/red]")
+        except Exception as e:
+            console.print(f"[red]Failed to start WhatsApp monitor: {e}[/red]")
+
+    def _wa_stop(self):
+        """Stop WhatsApp auto-reply monitor."""
+        try:
+            from tools import execute_tool
+            result = execute_tool("whatsapp_stop_monitor", {})
+            console.print(f"[yellow]{result.get('message', 'WhatsApp monitor stopped.')}[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Failed to stop WhatsApp monitor: {e}[/red]")
+
+    def _wa_status(self):
+        """Show WhatsApp monitor status."""
+        try:
+            from tools import execute_tool
+            result = execute_tool("whatsapp_status", {})
+            running = result.get("running", False)
+            if running:
+                stats = result.get("stats", {})
+                console.print(f"[green]WhatsApp monitor: RUNNING[/green]")
+                console.print(f"  Replies sent: {stats.get('replies_sent', 0)}")
+                console.print(f"  Uptime: {stats.get('uptime_seconds', 0):.0f}s")
+            else:
+                console.print("[yellow]WhatsApp monitor: STOPPED[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
 
     def _wake_word_mode(self):
         """Activate wake-word listening mode."""
@@ -379,6 +436,9 @@ Examples:
 
     args = parser.parse_args()
 
+    # Expose as module-level global so tools.py can access the agent via
+    # sys.modules["__main__"].jarvis.agent for auto-reply callbacks
+    global jarvis
     jarvis = JARVISInterface(
         text_only=args.text,
         voice_only=args.voice
