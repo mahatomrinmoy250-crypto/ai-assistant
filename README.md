@@ -2,7 +2,7 @@
 
 > *"Just A Rather Very Intelligent System"* — powered by Claude Opus 4.6
 
-A Tony Stark-style AI assistant that does **real work**: searches the web, controls your system, manages files, runs commands, sets timers, and more — all through natural voice or text conversation.
+A Tony Stark-style AI that does **real work**: searches the web, controls your system, manages files, **reads & replies to WhatsApp/Gmail/Facebook**, stores your business data in a knowledge base, and **auto-replies to customers** using your product info — all through natural voice or text conversation.
 
 ---
 
@@ -10,18 +10,19 @@ A Tony Stark-style AI assistant that does **real work**: searches the web, contr
 
 | Capability | What it does |
 |---|---|
-| 🌐 **Web Search** | Real-time DuckDuckGo search for current info |
+| 🌐 **Web Search** | Real-time DuckDuckGo search |
 | 📄 **Web Fetch** | Read and summarize any webpage |
 | 💻 **System Control** | Run shell commands, check CPU/RAM/disk/battery |
-| 📁 **File Management** | Read, write, list files and directories |
-| 🧮 **Calculator** | Math expressions, trig, logarithms |
-| 🕐 **Date & Time** | Current time, timezone support |
-| ⏱️ **Timers** | Set countdown timers with alerts |
-| 📋 **Clipboard** | Read and write clipboard contents |
-| 📝 **Notes** | Save and recall notes persistently |
-| 🖥️ **App Launcher** | Open applications and files |
-| 🎙️ **Voice I/O** | Speech-to-text input + text-to-speech output |
-| 🧠 **Adaptive Thinking** | Claude uses extended reasoning for hard problems |
+| 📁 **File Management** | Read, write, list files |
+| 🧮 **Calculator** | Math, trig, expressions |
+| ⏱️ **Timers** | Countdown timers with alerts |
+| 📋 **Clipboard & Notes** | Read/write clipboard, save notes |
+| 🧠 **Knowledge Base** | Store product prices, FAQs, company info — searchable by AI |
+| 💬 **WhatsApp** | Read unread messages, send & reply to contacts |
+| 📧 **Gmail** | Read inbox, reply to emails, send new emails |
+| 📘 **Facebook** | Create posts, comment on posts |
+| 🤖 **Auto-Reply** | Background monitor that reads WhatsApp/Gmail and auto-replies using your KB |
+| 🎙️ **Voice I/O** | Speech-to-text + text-to-speech |
 
 ---
 
@@ -33,81 +34,171 @@ A Tony Stark-style AI assistant that does **real work**: searches the web, contr
 pip install -r requirements.txt
 ```
 
-> **Note on PyAudio:** On Linux, you may need `sudo apt install portaudio19-dev python3-dev` first.
-> On macOS: `brew install portaudio`
+> **Linux (PyAudio):** `sudo apt install portaudio19-dev python3-dev`
+> **macOS:** `brew install portaudio`
 
-### 2. Set your API key
+### 2. Configure credentials
 
 ```bash
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
 ```
 
-Or export directly:
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+Edit `.env`:
+
+```env
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+
+# For Gmail auto-reply
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx   # Google App Password
+
+# For Facebook
+FB_EMAIL=you@email.com
+FB_PASSWORD=yourpassword
 ```
+
+> **Gmail App Password**: Google Account → Security → 2-Step Verification → App passwords → Generate for "Mail"
 
 ### 3. Run
 
 ```bash
-# Interactive mode (text + optional voice)
-python main.py
-
-# Text-only mode (no microphone/speaker needed)
-python main.py --text
-
-# Voice-first mode
-python main.py --voice
-
-# One-shot query
-python main.py -q "What's the latest news on AI?"
-python main.py --text -q "How much RAM am I using?"
+python main.py          # Interactive (text + voice)
+python main.py --text   # Text-only
+python main.py -q "What's the latest iPhone price in my knowledge base?"
 ```
 
 ---
 
-## Example Conversations
+## Knowledge Base — Feed JARVIS Your Business Data
+
+The knowledge base (KB) is how JARVIS learns YOUR specific information:
+
+### Store data
 
 ```
-You: What's the weather like in Tokyo right now?
-JARVIS: [Using tool: web_search...]
-        According to current data, Tokyo is experiencing...
+You: Remember that iPhone 15 costs $999
+JARVIS: [kb_store → category: products, key: iPhone 15, value: $999]
+        Stored. I'll use this when anyone asks.
 
-You: How much RAM am I using?
-JARVIS: [Using tool: get_system_info...]
-        Your system is currently using 6.2 GB of 16 GB RAM (38.7%)...
+You: Store our business hours: Monday to Friday, 9am to 6pm
+JARVIS: [kb_store → category: company, key: business hours, value: Mon-Fri 9am-6pm]
+        Done.
 
-You: Set a timer for 10 minutes
-JARVIS: [Using tool: set_timer...]
-        Timer set — it will fire at 14:35:00.
+You: Here's our FAQ — Q: "Do you offer free shipping?" A: "Yes, on orders over $50"
+JARVIS: [kb_store → category: faq, key: free shipping, value: Yes on orders over $50]
+        Stored in the FAQ category.
+```
 
-You: Calculate the compound interest on $10,000 at 7% for 20 years
-JARVIS: [Using tool: calculate...]
-        At 7% annual compound interest: $10,000 grows to $38,696.84...
+### Load a whole product catalog at once
 
-You: Search for the best Python web frameworks in 2024
-JARVIS: [Using tool: web_search...]
-        Here's what I found...
+```
+You: Load these products into the knowledge base:
+     [{"category":"products","key":"iPhone 15","value":"$999"},
+      {"category":"products","key":"Samsung S24","value":"$799"},
+      {"category":"faq","key":"return policy","value":"30 days full refund"}]
+JARVIS: [kb_bulk_store] → Stored 3 entries.
+```
 
-You: Save a note: remind me to call the dentist
-JARVIS: [Using tool: save_note...]
-        Note saved. I've stored "remind me to call the dentist"...
+### JARVIS auto-uses KB when answering
 
-You: What files are in my home directory?
-JARVIS: [Using tool: list_directory...]
-        Your home directory contains...
+```
+You (or a customer on WhatsApp): What's the price of iPhone 15?
+JARVIS: [kb_search → "iPhone 15 price"] → Found: $999
+        The iPhone 15 is $999.
 ```
 
 ---
 
-## Voice Commands
+## WhatsApp Auto-Reply Setup
 
-| Command | Effect |
+JARVIS can monitor WhatsApp and auto-reply to customers using your KB data:
+
+```
+You: Connect to WhatsApp
+JARVIS: [whatsapp_connect] → Browser opens, QR code shown
+        WhatsApp Web is open. Scan the QR code with your phone.
+
+You: (scan QR on phone)
+
+You: Start auto-replying to WhatsApp using my product info
+JARVIS: [kb_list] → Shows your stored products/FAQs
+        [whatsapp_connect] → Already connected
+        [start_auto_reply, platforms=["whatsapp"]] →
+        Auto-reply monitor started. Checking every 30 seconds.
+        When customers message about your products, I'll reply using your knowledge base.
+```
+
+**What happens when a customer messages:**
+1. Customer sends: *"Hi, how much is the Samsung S24?"*
+2. JARVIS searches KB → finds $799
+3. JARVIS replies: *"Hi! The Samsung S24 is priced at $799. Is there anything else I can help you with?"*
+
+---
+
+## Gmail Setup
+
+```
+You: Check my unread emails
+JARVIS: [gmail_get_unread] → 3 unread emails
+        You have 3 unread emails:
+        1. From: john@example.com — "Product inquiry"
+        2. From: sarah@co.com — "Order #1234 status"
+        ...
+
+You: Reply to the first email with info about our return policy
+JARVIS: [kb_search → "return policy"] → 30 days full refund
+        [gmail_reply uid=5 body="Hi John, our return policy is 30 days..."]
+        Replied to john@example.com.
+
+You: Start auto-replying to Gmail too
+JARVIS: [start_auto_reply, platforms=["gmail"]]
+        Gmail auto-reply started.
+```
+
+---
+
+## Facebook
+
+```
+You: Post to Facebook: "New products just arrived! iPhone 15 now in stock at $999"
+JARVIS: [facebook_connect] → Browser logs in
+        [facebook_post] → Posted successfully!
+
+You: Comment "Thanks for your interest!" on this post: https://facebook.com/...
+JARVIS: [facebook_comment] → Comment posted.
+```
+
+---
+
+## Architecture
+
+```
+main.py                    ← Entry point, interactive loop, CLI
+agent.py                   ← Claude Opus 4.6 brain (streaming + tool use)
+tools.py                   ← All tool implementations (33 tools)
+voice.py                   ← Speech I/O (mic + speakers)
+memory_db.py               ← SQLite knowledge base (full-text search)
+integrations/
+  whatsapp.py              ← WhatsApp Web via Selenium
+  gmail.py                 ← Gmail via IMAP/SMTP
+  facebook.py              ← Facebook via Selenium
+  monitor.py               ← Auto-reply background daemon
+```
+
+### Tool count: 33
+
+| Category | Tools |
 |---|---|
-| `listen` | One-shot voice input |
-| `wake` | Enable wake-word mode (say "JARVIS") |
-| `voice on/off` | Toggle voice output |
+| Web | web_search, web_fetch |
+| System | run_command, get_system_info |
+| Files | read_file, write_file, list_directory |
+| Utility | calculate, get_datetime, clipboard_read/write, save_note, read_notes, set_timer, open_application |
+| Knowledge Base | kb_store, kb_search, kb_list, kb_delete, kb_bulk_store |
+| WhatsApp | whatsapp_connect, whatsapp_get_messages, whatsapp_send |
+| Gmail | gmail_get_unread, gmail_reply, gmail_send, gmail_search |
+| Facebook | facebook_connect, facebook_post, facebook_comment |
+| Auto-Reply | start_auto_reply, stop_auto_reply, get_auto_reply_log |
 
 ---
 
@@ -115,31 +206,12 @@ JARVIS: [Using tool: list_directory...]
 
 | Command | Effect |
 |---|---|
-| `help` | Show help and capabilities |
-| `clear` | Reset conversation history |
-| `history` | Show session summary |
-| `quit` / `exit` | Shut down JARVIS |
-
----
-
-## Architecture
-
-```
-main.py          ← Entry point, CLI args, interactive loop
-agent.py         ← Claude Opus 4.6 agent with tool use + streaming
-tools.py         ← Tool implementations (15 tools)
-voice.py         ← Speech recognition + text-to-speech
-requirements.txt ← Dependencies
-.env.example     ← API key template
-```
-
-### Key Design Decisions
-
-- **Streaming responses** — Text appears token-by-token like a real conversation
-- **Adaptive thinking** — Claude uses extended reasoning (`thinking: {type: "adaptive"}`) for complex queries
-- **Agentic loop** — Automatic multi-step tool use until the task is complete
-- **Conversation memory** — Full history kept (last 20 turns) for context
-- **Graceful degradation** — Works text-only if mic/speakers unavailable
+| `help` | Show help |
+| `clear` | Reset conversation |
+| `voice on/off` | Toggle TTS |
+| `listen` | One-shot voice input |
+| `wake` | Wake-word mode ("JARVIS") |
+| `quit` | Shut down |
 
 ---
 
@@ -147,5 +219,6 @@ requirements.txt ← Dependencies
 
 - Python 3.9+
 - Anthropic API key (Claude Opus 4.6)
-- Microphone (optional, for voice input)
-- Speakers (optional, for voice output)
+- Chrome or Firefox (for WhatsApp/Facebook automation)
+- Gmail App Password (for Gmail integration)
+- Microphone + speakers (optional, for voice mode)

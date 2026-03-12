@@ -674,11 +674,512 @@ def open_application(target: str) -> dict:
         return {"error": str(e), "target": target}
 
 
+# ──────────────────── Knowledge Base tool definitions ────────────────────────
+
+KB_TOOL_DEFINITIONS = [
+    {
+        "name": "kb_store",
+        "description": (
+            "Store a piece of information in the persistent knowledge base. "
+            "Use this to remember company info, product prices, FAQs, contact details, "
+            "policies, or ANY data the user wants JARVIS to remember and use for replies. "
+            "Example: store('products', 'iPhone 15 price', '$999'), "
+            "store('company', 'business hours', 'Mon-Fri 9am-6pm')"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Category/topic (e.g. 'products', 'company', 'faq', 'contacts', 'pricing')"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "The label/name for this info (e.g. 'iPhone 15 price')"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The actual information/value to store"
+                },
+                "tags": {
+                    "type": "string",
+                    "description": "Optional comma-separated tags for better search (e.g. 'price,apple,phone')"
+                }
+            },
+            "required": ["category", "key", "value"]
+        }
+    },
+    {
+        "name": "kb_search",
+        "description": (
+            "Search the knowledge base for information matching a query. "
+            "Use this to look up stored data before answering questions. "
+            "ALWAYS search the KB when someone asks about prices, products, policies, or company info."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query (e.g. 'iPhone price', 'return policy', 'opening hours')"
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional: filter by category"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 10)"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "kb_list",
+        "description": "List all knowledge base entries, optionally filtered by category.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Optional: filter by category"
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "kb_delete",
+        "description": "Delete a specific entry from the knowledge base.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Category of the entry"},
+                "key": {"type": "string", "description": "Key of the entry to delete"}
+            },
+            "required": ["category", "key"]
+        }
+    },
+    {
+        "name": "kb_bulk_store",
+        "description": (
+            "Store multiple knowledge base entries at once from a list. "
+            "Useful for loading a product catalog, FAQ sheet, or contact list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "description": "Array of {category, key, value, tags?} objects",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string"},
+                            "key": {"type": "string"},
+                            "value": {"type": "string"},
+                            "tags": {"type": "string"}
+                        },
+                        "required": ["category", "key", "value"]
+                    }
+                }
+            },
+            "required": ["entries"]
+        }
+    }
+]
+
+# ──────────────────── Messaging tool definitions ─────────────────────────────
+
+MESSAGING_TOOL_DEFINITIONS = [
+    # ── WhatsApp ──
+    {
+        "name": "whatsapp_connect",
+        "description": (
+            "Connect to WhatsApp Web. Opens a browser window — "
+            "scan the QR code with your phone on first use. "
+            "Session is saved so subsequent calls don't need QR."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "headless": {
+                    "type": "boolean",
+                    "description": "Run browser in background (headless). Default false so you can see the QR code.",
+                    "default": False
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "whatsapp_get_messages",
+        "description": (
+            "Get unread WhatsApp messages from all chats. "
+            "Returns contact names and their recent messages."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of unread chats to fetch (default: 10)"
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "whatsapp_send",
+        "description": "Send a WhatsApp message to a specific contact.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact": {
+                    "type": "string",
+                    "description": "Contact name exactly as it appears in WhatsApp"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The message to send"
+                }
+            },
+            "required": ["contact", "message"]
+        }
+    },
+    # ── Gmail ──
+    {
+        "name": "gmail_get_unread",
+        "description": (
+            "Get unread emails from Gmail inbox. "
+            "Returns sender, subject, and body of each email."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max emails to fetch (default: 10)"
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "gmail_reply",
+        "description": "Reply to a Gmail email by its UID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "uid": {
+                    "type": "string",
+                    "description": "Email UID (from gmail_get_unread result)"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Reply message body"
+                }
+            },
+            "required": ["uid", "body"]
+        }
+    },
+    {
+        "name": "gmail_send",
+        "description": "Send a new email via Gmail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Recipient email address"
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Email body text"
+                }
+            },
+            "required": ["to", "subject", "body"]
+        }
+    },
+    {
+        "name": "gmail_search",
+        "description": "Search Gmail for emails matching a query (by subject or sender).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search term (subject or sender name/email)"
+                },
+                "limit": {"type": "integer", "description": "Max results (default: 10)"}
+            },
+            "required": ["query"]
+        }
+    },
+    # ── Facebook ──
+    {
+        "name": "facebook_connect",
+        "description": (
+            "Connect to Facebook. Opens a browser window and logs in. "
+            "Requires FB_EMAIL and FB_PASSWORD in .env file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "headless": {
+                    "type": "boolean",
+                    "description": "Run in background. Default false.",
+                    "default": False
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "facebook_post",
+        "description": "Create a new post on your Facebook timeline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Post content"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Optional URL to include in the post"
+                }
+            },
+            "required": ["text"]
+        }
+    },
+    {
+        "name": "facebook_comment",
+        "description": "Post a comment on a specific Facebook post.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "post_url": {
+                    "type": "string",
+                    "description": "Full URL of the Facebook post to comment on"
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "Comment text"
+                }
+            },
+            "required": ["post_url", "comment"]
+        }
+    },
+    # ── Auto-reply ──
+    {
+        "name": "start_auto_reply",
+        "description": (
+            "Start background auto-reply monitoring for WhatsApp and/or Gmail. "
+            "JARVIS will check for new messages every N seconds and reply using "
+            "knowledge base data. Perfect for handling customer queries automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "platforms": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["whatsapp", "gmail"]},
+                    "description": "Which platforms to monitor"
+                },
+                "check_interval": {
+                    "type": "integer",
+                    "description": "Seconds between checks (default: 30)"
+                }
+            },
+            "required": ["platforms"]
+        }
+    },
+    {
+        "name": "stop_auto_reply",
+        "description": "Stop the auto-reply monitor.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_auto_reply_log",
+        "description": "View recent auto-reply activity log.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Number of log entries (default: 20)"}
+            },
+            "required": []
+        }
+    }
+]
+
+# Combine all tool definitions
+TOOL_DEFINITIONS = (
+    TOOL_DEFINITIONS
+    + KB_TOOL_DEFINITIONS
+    + MESSAGING_TOOL_DEFINITIONS
+)
+
+# ──────────────────── KB tool implementations ─────────────────────────────
+
+def kb_store(category: str, key: str, value: str, tags: str = "") -> dict:
+    from memory_db import get_kb
+    return get_kb().store(category, key, value, tags)
+
+def kb_search(query: str, category: str = None, limit: int = 10) -> dict:
+    from memory_db import get_kb
+    return get_kb().search(query, category, limit)
+
+def kb_list(category: str = None) -> dict:
+    from memory_db import get_kb
+    return get_kb().list_all(category)
+
+def kb_delete(category: str, key: str) -> dict:
+    from memory_db import get_kb
+    return get_kb().delete(category, key)
+
+def kb_bulk_store(entries: list) -> dict:
+    from memory_db import get_kb
+    return get_kb().bulk_store(entries)
+
+# ──────────────────── Messaging implementations ───────────────────────────
+
+def whatsapp_connect(headless: bool = False) -> dict:
+    try:
+        from integrations.whatsapp import init_whatsapp
+        return init_whatsapp(headless=headless)
+    except ImportError as e:
+        return {"error": str(e)}
+
+def whatsapp_get_messages(limit: int = 10) -> dict:
+    try:
+        from integrations.whatsapp import get_whatsapp_client
+        wa = get_whatsapp_client()
+        if not wa:
+            return {"error": "WhatsApp not connected. Call whatsapp_connect first."}
+        return wa.get_unread_messages(limit=limit)
+    except Exception as e:
+        return {"error": str(e)}
+
+def whatsapp_send(contact: str, message: str) -> dict:
+    try:
+        from integrations.whatsapp import get_whatsapp_client
+        wa = get_whatsapp_client()
+        if not wa:
+            return {"error": "WhatsApp not connected. Call whatsapp_connect first."}
+        return wa.send_message(contact, message)
+    except Exception as e:
+        return {"error": str(e)}
+
+def gmail_get_unread(limit: int = 10) -> dict:
+    try:
+        from integrations.gmail import get_gmail_client
+        return get_gmail_client().get_unread(limit=limit)
+    except Exception as e:
+        return {"error": str(e)}
+
+def gmail_reply(uid: str, body: str) -> dict:
+    try:
+        from integrations.gmail import get_gmail_client
+        return get_gmail_client().reply_to_email(uid=uid, body=body)
+    except Exception as e:
+        return {"error": str(e)}
+
+def gmail_send(to: str, subject: str, body: str) -> dict:
+    try:
+        from integrations.gmail import get_gmail_client
+        return get_gmail_client().send_email(to=to, subject=subject, body=body)
+    except Exception as e:
+        return {"error": str(e)}
+
+def gmail_search(query: str, limit: int = 10) -> dict:
+    try:
+        from integrations.gmail import get_gmail_client
+        return get_gmail_client().search_emails(query=query, limit=limit)
+    except Exception as e:
+        return {"error": str(e)}
+
+def facebook_connect(headless: bool = False) -> dict:
+    try:
+        from integrations.facebook import init_facebook
+        return init_facebook(headless=headless)
+    except ImportError as e:
+        return {"error": str(e)}
+
+def facebook_post(text: str, url: str = None) -> dict:
+    try:
+        from integrations.facebook import get_facebook_client
+        fb = get_facebook_client()
+        if not fb:
+            return {"error": "Facebook not connected. Call facebook_connect first."}
+        return fb.create_post(text=text, url=url)
+    except Exception as e:
+        return {"error": str(e)}
+
+def facebook_comment(post_url: str, comment: str) -> dict:
+    try:
+        from integrations.facebook import get_facebook_client
+        fb = get_facebook_client()
+        if not fb:
+            return {"error": "Facebook not connected. Call facebook_connect first."}
+        return fb.comment_on_post(post_url=post_url, comment_text=comment)
+    except Exception as e:
+        return {"error": str(e)}
+
+# Global monitor instance
+_monitor = None
+
+def start_auto_reply(platforms: list, check_interval: int = 30) -> dict:
+    global _monitor
+    try:
+        from integrations.monitor import AutoReplyMonitor
+        from memory_db import get_kb
+        # Import agent lazily to avoid circular import
+        import sys
+        agent = None
+        # Try to get the running agent from main module
+        main_mod = sys.modules.get("__main__")
+        if main_mod and hasattr(main_mod, "jarvis") and hasattr(main_mod.jarvis, "agent"):
+            agent = main_mod.jarvis.agent
+
+        if not agent:
+            return {"error": "Could not access JARVIS agent for reply generation. Run from main.py."}
+
+        _monitor = AutoReplyMonitor(agent=agent, kb=get_kb(), check_interval=check_interval)
+        return _monitor.start(platforms=platforms)
+    except Exception as e:
+        return {"error": str(e)}
+
+def stop_auto_reply() -> dict:
+    global _monitor
+    if not _monitor:
+        return {"error": "Auto-reply monitor is not running"}
+    result = _monitor.stop()
+    _monitor = None
+    return result
+
+def get_auto_reply_log(limit: int = 20) -> dict:
+    global _monitor
+    if not _monitor:
+        return {"log": [], "message": "Auto-reply monitor not running"}
+    return _monitor.get_reply_log(limit=limit)
+
+
 # ─────────────────────────── Dispatcher ─────────────────────────────────────
 
 def execute_tool(tool_name: str, tool_input: dict) -> Any:
     """Dispatch tool calls to their implementations."""
     handlers = {
+        # Original tools
         "web_search": lambda i: web_search(i["query"], i.get("max_results", 5)),
         "web_fetch": lambda i: web_fetch(i["url"]),
         "run_command": lambda i: run_command(i["command"], i.get("timeout", 30)),
@@ -694,6 +1195,29 @@ def execute_tool(tool_name: str, tool_input: dict) -> Any:
         "read_notes": lambda i: read_notes(),
         "set_timer": lambda i: set_timer(i["seconds"], i.get("label", "Timer")),
         "open_application": lambda i: open_application(i["target"]),
+        # Knowledge base
+        "kb_store": lambda i: kb_store(i["category"], i["key"], i["value"], i.get("tags", "")),
+        "kb_search": lambda i: kb_search(i["query"], i.get("category"), i.get("limit", 10)),
+        "kb_list": lambda i: kb_list(i.get("category")),
+        "kb_delete": lambda i: kb_delete(i["category"], i["key"]),
+        "kb_bulk_store": lambda i: kb_bulk_store(i["entries"]),
+        # WhatsApp
+        "whatsapp_connect": lambda i: whatsapp_connect(i.get("headless", False)),
+        "whatsapp_get_messages": lambda i: whatsapp_get_messages(i.get("limit", 10)),
+        "whatsapp_send": lambda i: whatsapp_send(i["contact"], i["message"]),
+        # Gmail
+        "gmail_get_unread": lambda i: gmail_get_unread(i.get("limit", 10)),
+        "gmail_reply": lambda i: gmail_reply(i["uid"], i["body"]),
+        "gmail_send": lambda i: gmail_send(i["to"], i["subject"], i["body"]),
+        "gmail_search": lambda i: gmail_search(i["query"], i.get("limit", 10)),
+        # Facebook
+        "facebook_connect": lambda i: facebook_connect(i.get("headless", False)),
+        "facebook_post": lambda i: facebook_post(i["text"], i.get("url")),
+        "facebook_comment": lambda i: facebook_comment(i["post_url"], i["comment"]),
+        # Auto-reply
+        "start_auto_reply": lambda i: start_auto_reply(i["platforms"], i.get("check_interval", 30)),
+        "stop_auto_reply": lambda i: stop_auto_reply(),
+        "get_auto_reply_log": lambda i: get_auto_reply_log(i.get("limit", 20)),
     }
 
     handler = handlers.get(tool_name)
