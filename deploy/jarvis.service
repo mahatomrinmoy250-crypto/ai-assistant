@@ -1,0 +1,28 @@
+# systemd service — JARVIS ko background mein 24/7 chalane ke liye
+#
+# Install karo:
+#   sudo cp deploy/jarvis.service /etc/systemd/system/jarvis.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable jarvis
+#   sudo systemctl start jarvis
+#
+# Logs dekhne ke liye:
+#   sudo journalctl -u jarvis -f
+
+[Unit]
+Description=JARVIS AI Assistant API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ai-assistant
+EnvironmentFile=/root/ai-assistant/.env
+Environment=DISPLAY=:99
+ExecStartPre=/usr/bin/Xvfb :99 -screen 0 1280x1024x24 &
+ExecStart=/usr/bin/python3 /root/ai-assistant/start_api.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
