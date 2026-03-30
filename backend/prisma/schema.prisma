@@ -1,0 +1,169 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  apiKeys      ApiKey[]
+  assistants   Assistant[]
+  phoneNumbers PhoneNumber[]
+  calls        Call[]
+}
+
+model ApiKey {
+  id        String    @id @default(cuid())
+  key       String    @unique
+  name      String
+  userId    String
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Assistant {
+  id          String   @id @default(cuid())
+  name        String
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // System prompt / personality
+  systemPrompt     String   @db.Text
+  firstMessage     String?
+
+  // LLM Configuration
+  llmProvider      String   @default("anthropic")  // anthropic | openai
+  llmModel         String   @default("claude-sonnet-4-6")
+  llmTemperature   Float    @default(0.7)
+  llmMaxTokens     Int      @default(500)
+
+  // STT Configuration
+  sttProvider      String   @default("deepgram")
+  sttLanguage      String   @default("en-US")
+  sttModel         String   @default("nova-2")
+
+  // TTS Configuration
+  ttsProvider      String   @default("elevenlabs")
+  ttsVoiceId       String   @default("21m00Tcm4TlvDq8ikWAM")  // Rachel
+  ttsModel         String   @default("eleven_turbo_v2_5")
+  ttsStability     Float    @default(0.5)
+  ttsSimilarity    Float    @default(0.75)
+  ttsSpeed         Float    @default(1.0)
+
+  // Interruption settings
+  endCallMessage   String?
+  endCallPhrases   String[] @default([])
+  maxCallDuration  Int      @default(3600) // seconds
+
+  // Webhook
+  webhookUrl       String?
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phoneNumbers     PhoneNumber[]
+  calls            Call[]
+}
+
+model PhoneNumber {
+  id            String    @id @default(cuid())
+  number        String    @unique  // E.164 format: +1234567890
+  friendlyName  String?
+  twilioSid     String?   @unique
+  userId        String
+  assistantId   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assistant   Assistant?  @relation(fields: [assistantId], references: [id])
+  calls       Call[]
+}
+
+model Call {
+  id              String    @id @default(cuid())
+  userId          String
+  assistantId     String
+  phoneNumberId   String?
+
+  // Call metadata
+  type            CallType  @default(INBOUND)
+  status          CallStatus @default(QUEUED)
+  toNumber        String?
+  fromNumber      String?
+  twilioCallSid   String?   @unique
+  twilioRoomSid   String?
+
+  // Timing
+  startedAt       DateTime?
+  endedAt         DateTime?
+  duration        Int?      // seconds
+
+  // Cost tracking
+  cost            Float?
+
+  // Recordings
+  recordingUrl    String?
+  recordingSid    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assistant       Assistant   @relation(fields: [assistantId], references: [id])
+  phoneNumber     PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
+  messages        CallMessage[]
+
+  @@index([userId])
+  @@index([assistantId])
+  @@index([status])
+}
+
+model CallMessage {
+  id        String      @id @default(cuid())
+  callId    String
+  role      MessageRole
+  content   String      @db.Text
+  timestamp DateTime    @default(now())
+
+  call      Call        @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+}
+
+enum CallType {
+  INBOUND
+  OUTBOUND
+  WEB
+}
+
+enum CallStatus {
+  QUEUED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  BUSY
+  NO_ANSWER
+  CANCELED
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
