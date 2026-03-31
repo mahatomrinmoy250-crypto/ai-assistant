@@ -10,16 +10,38 @@ interface Props {
   submitLabel?: string;
 }
 
-const CLAUDE_MODELS = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
+// Gemini Live models (handles STT + LLM + TTS in one)
+const GEMINI_LIVE_MODELS = [
+  'gemini-3.1-flash-live-preview',   // Latest — best quality
+  'gemini-live-2.5-flash-native-audio', // GA stable
 ];
 
-const ELEVENLABS_MODELS = [
-  'eleven_turbo_v2_5',
-  'eleven_turbo_v2',
-  'eleven_multilingual_v2',
+// Gemini built-in voices (30 HD voices available)
+const GEMINI_VOICES = [
+  { id: 'Puck',     label: 'Puck (Upbeat male)' },
+  { id: 'Charon',   label: 'Charon (Informative male)' },
+  { id: 'Kore',     label: 'Kore (Firm female)' },
+  { id: 'Fenrir',   label: 'Fenrir (Excitable male)' },
+  { id: 'Aoede',    label: 'Aoede (Breezy female)' },
+  { id: 'Leda',     label: 'Leda (Youthful female)' },
+  { id: 'Orus',     label: 'Orus (Firm male)' },
+  { id: 'Zephyr',   label: 'Zephyr (Bright female)' },
+  { id: 'Achernar', label: 'Achernar (Soft female)' },
+  { id: 'Schedar',  label: 'Schedar (Even male)' },
+];
+
+// Supported languages
+const LANGUAGES = [
+  { code: 'en-US', label: 'English (US)' },
+  { code: 'en-IN', label: 'English (India)' },
+  { code: 'hi-IN', label: 'Hindi' },
+  { code: 'en-GB', label: 'English (UK)' },
+  { code: 'es-ES', label: 'Spanish' },
+  { code: 'fr-FR', label: 'French' },
+  { code: 'de-DE', label: 'German' },
+  { code: 'pt-BR', label: 'Portuguese (Brazil)' },
+  { code: 'ar-XA', label: 'Arabic' },
+  { code: 'ja-JP', label: 'Japanese' },
 ];
 
 export default function AssistantForm({
@@ -32,13 +54,13 @@ export default function AssistantForm({
     name: initialValues?.name || '',
     systemPrompt: initialValues?.systemPrompt || '',
     firstMessage: initialValues?.firstMessage || '',
-    llmModel: initialValues?.llmModel || 'claude-sonnet-4-6',
+    llmModel: initialValues?.llmModel || 'gemini-3.1-flash-live-preview',
     llmTemperature: initialValues?.llmTemperature ?? 0.7,
     llmMaxTokens: initialValues?.llmMaxTokens ?? 500,
     sttLanguage: initialValues?.sttLanguage || 'en-US',
-    sttModel: initialValues?.sttModel || 'nova-2',
-    ttsVoiceId: initialValues?.ttsVoiceId || '21m00Tcm4TlvDq8ikWAM',
-    ttsModel: initialValues?.ttsModel || 'eleven_turbo_v2_5',
+    sttModel: initialValues?.sttModel || 'gemini-3.1-flash-live-preview',
+    ttsVoiceId: initialValues?.ttsVoiceId || 'Puck',
+    ttsModel: initialValues?.ttsModel || 'gemini-3.1-flash-live-preview',
     ttsStability: initialValues?.ttsStability ?? 0.5,
     ttsSimilarity: initialValues?.ttsSimilarity ?? 0.75,
     ttsSpeed: initialValues?.ttsSpeed ?? 1.0,
@@ -95,73 +117,59 @@ export default function AssistantForm({
         </div>
       </section>
 
-      {/* LLM */}
+      {/* Gemini Live — AI Engine */}
       <section className="card p-6 space-y-4">
-        <h2 className="font-semibold text-gray-900">Language Model (LLM)</h2>
+        <div className="flex items-center gap-2 mb-1">
+          <h2 className="font-semibold text-gray-900">AI Engine</h2>
+          <span className="badge-blue text-xs">Gemini Live — STT + LLM + TTS in one</span>
+        </div>
+        <p className="text-xs text-gray-500">
+          Gemini 3.1 Flash Live handles speech recognition, conversation, and voice synthesis in a single real-time API — no separate STT/TTS needed.
+        </p>
         <div>
           <label className="label">Model</label>
           <select
             className="input"
             value={form.llmModel}
-            onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
+            onChange={(e) => setForm({ ...form, llmModel: e.target.value, sttModel: e.target.value, ttsModel: e.target.value })}
           >
-            {CLAUDE_MODELS.map((m) => (
+            {GEMINI_LIVE_MODELS.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
           </select>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="label">Temperature ({form.llmTemperature})</label>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={form.llmTemperature}
-              onChange={(e) => setForm({ ...form, llmTemperature: parseFloat(e.target.value) })}
-              className="w-full"
-            />
+            <label className="label">Language</label>
+            <select
+              className="input"
+              value={form.sttLanguage}
+              onChange={(e) => setForm({ ...form, sttLanguage: e.target.value })}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
+            </select>
           </div>
           <div>
-            <label className="label">Max Tokens</label>
-            <input
-              type="number"
+            <label className="label">Voice</label>
+            <select
               className="input"
-              min="50"
-              max="4096"
-              value={form.llmMaxTokens}
-              onChange={(e) => setForm({ ...form, llmMaxTokens: parseInt(e.target.value) })}
-            />
+              value={form.ttsVoiceId}
+              onChange={(e) => setForm({ ...form, ttsVoiceId: e.target.value })}
+            >
+              {GEMINI_VOICES.map((v) => (
+                <option key={v.id} value={v.id}>{v.label}</option>
+              ))}
+            </select>
           </div>
         </div>
       </section>
 
-      {/* TTS */}
+      {/* Advanced voice settings (kept for DB compat) */}
       <section className="card p-6 space-y-4">
-        <h2 className="font-semibold text-gray-900">Voice Synthesis (TTS)</h2>
+        <h2 className="font-semibold text-gray-900">Advanced Voice Settings</h2>
         <div>
-          <label className="label">Voice ID (ElevenLabs)</label>
-          <input
-            className="input"
-            placeholder="21m00Tcm4TlvDq8ikWAM"
-            value={form.ttsVoiceId}
-            onChange={(e) => setForm({ ...form, ttsVoiceId: e.target.value })}
-          />
-          <p className="text-xs text-gray-400 mt-1">Find voice IDs at elevenlabs.io/voice-library</p>
-        </div>
-        <div>
-          <label className="label">TTS Model</label>
-          <select
-            className="input"
-            value={form.ttsModel}
-            onChange={(e) => setForm({ ...form, ttsModel: e.target.value })}
-          >
-            {ELEVENLABS_MODELS.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </div>
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="label">Stability ({form.ttsStability})</label>
@@ -200,23 +208,12 @@ export default function AssistantForm({
           <div>
             <label className="label">Language</label>
             <input
-              className="input"
-              value={form.sttLanguage}
-              onChange={(e) => setForm({ ...form, sttLanguage: e.target.value })}
+              type="range" min="0" max="1" step="0.1"
+              value={form.llmTemperature}
+              onChange={(e) => setForm({ ...form, llmTemperature: parseFloat(e.target.value) })}
+              className="w-full"
             />
-          </div>
-          <div>
-            <label className="label">Model</label>
-            <select
-              className="input"
-              value={form.sttModel}
-              onChange={(e) => setForm({ ...form, sttModel: e.target.value })}
-            >
-              <option value="nova-2">nova-2 (recommended)</option>
-              <option value="nova">nova</option>
-              <option value="enhanced">enhanced</option>
-              <option value="base">base</option>
-            </select>
+            <p className="text-xs text-gray-400 mt-1">Controls response creativity ({form.llmTemperature})</p>
           </div>
         </div>
       </section>

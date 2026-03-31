@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { twilioService } from '../services/telephony/twilio';
+import { vobizService } from '../services/telephony/vobiz';
 import { config } from '../config';
 
 const router = Router();
@@ -23,62 +23,55 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// GET /api/phone-numbers/available
+// GET /api/phone-numbers/available?countryCode=IN
 router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { areaCode = '415', limit = '10' } = req.query;
-    const numbers = await twilioService.listAvailableNumbers(
-      areaCode as string,
+    const { countryCode = 'IN', limit = '10' } = req.query;
+    const numbers = await vobizService.listAvailableNumbers(
+      countryCode as string,
       parseInt(limit as string)
     );
-    res.json(
-      numbers.map((n) => ({
-        phoneNumber: n.phoneNumber,
-        friendlyName: n.friendlyName,
-        region: n.region,
-        locality: n.locality,
-      }))
-    );
+    res.json(numbers);
   } catch (err) {
     console.error('[PhoneNumbers] Error listing available numbers:', err);
     res.status(500).json({ error: 'Failed to get available numbers' });
   }
 });
 
-// POST /api/phone-numbers (purchase)
+// POST /api/phone-numbers — purchase a number
 router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { areaCode } = z
-      .object({ areaCode: z.string().optional() })
-      .parse(req.body);
+    const { number } = z.object({ number: z.string() }).parse(req.body);
 
-    const { sid, number, friendlyName } = await twilioService.purchasePhoneNumber(
-      areaCode || '415'
+    const { uuid, number: purchased } = await vobizService.purchasePhoneNumber(number);
+
+    // Set webhook on the number immediately
+    await vobizService.updateNumberWebhook(
+      uuid,
+      `${config.vobiz.webhookBaseUrl}/api/calls/inbound`
     );
 
     const phoneNumber = await prisma.phoneNumber.create({
       data: {
-        number,
-        friendlyName,
-        twilioSid: sid,
+        number: purchased,
+        twilioSid: uuid,   // reusing field for Vobiz UUID
         userId: req.user!.id,
       },
     });
 
     res.status(201).json(phoneNumber);
   } catch (err) {
-    console.error('[PhoneNumbers] Error purchasing number:', err);
+    console.error('[PhoneNumbers] Purchase error:', err);
     res.status(500).json({ error: 'Failed to purchase phone number' });
   }
 });
 
-// PATCH /api/phone-numbers/:id (assign assistant)
+// PATCH /api/phone-numbers/:id — assign assistant
 router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
       where: { id: req.params.id, userId: req.user!.id },
     });
-
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
       return;
@@ -104,14 +97,6 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
       include: { assistant: { select: { id: true, name: true } } },
     });
 
-    // Update Twilio webhook
-    if (existing.twilioSid) {
-      await twilioService.updatePhoneWebhook(
-        existing.twilioSid,
-        `${config.twilio.webhookBaseUrl}/api/calls/inbound`
-      );
-    }
-
     res.json(phoneNumber);
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -122,20 +107,19 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// DELETE /api/phone-numbers/:id (release)
+// DELETE /api/phone-numbers/:id — release
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
       where: { id: req.params.id, userId: req.user!.id },
     });
-
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
       return;
     }
 
     if (existing.twilioSid) {
-      await twilioService.releasePhoneNumber(existing.twilioSid);
+      await vobizService.releasePhoneNumber(existing.twilioSid);
     }
 
     await prisma.phoneNumber.delete({ where: { id: req.params.id } });

@@ -46,21 +46,21 @@ model Assistant {
   systemPrompt     String   @db.Text
   firstMessage     String?
 
-  // LLM Configuration
-  llmProvider      String   @default("anthropic")  // anthropic | openai
-  llmModel         String   @default("claude-sonnet-4-6")
+  // Gemini Live Configuration (replaces separate STT + LLM + TTS)
+  llmProvider      String   @default("gemini")
+  llmModel         String   @default("gemini-3.1-flash-live-preview")
   llmTemperature   Float    @default(0.7)
   llmMaxTokens     Int      @default(500)
 
-  // STT Configuration
-  sttProvider      String   @default("deepgram")
+  // STT Configuration (language for Gemini Live)
+  sttProvider      String   @default("gemini")
   sttLanguage      String   @default("en-US")
-  sttModel         String   @default("nova-2")
+  sttModel         String   @default("gemini-3.1-flash-live-preview")
 
-  // TTS Configuration
-  ttsProvider      String   @default("elevenlabs")
-  ttsVoiceId       String   @default("21m00Tcm4TlvDq8ikWAM")  // Rachel
-  ttsModel         String   @default("eleven_turbo_v2_5")
+  // TTS / Voice Configuration (Gemini voice name)
+  ttsProvider      String   @default("gemini")
+  ttsVoiceId       String   @default("Puck")   // Gemini voice: Puck, Charon, Kore, Fenrir, Aoede
+  ttsModel         String   @default("gemini-3.1-flash-live-preview")
   ttsStability     Float    @default(0.5)
   ttsSimilarity    Float    @default(0.75)
   ttsSpeed         Float    @default(1.0)

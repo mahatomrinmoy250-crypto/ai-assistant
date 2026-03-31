@@ -1,69 +1,100 @@
 import { Assistant, Call } from '@prisma/client';
 import { WebSocket } from 'ws';
-import { ListenLiveClient } from '@deepgram/sdk';
 import { prisma } from '../lib/prisma';
-import { deepgramSTT } from './stt/deepgram';
-import { claudeLLM } from './llm/claude';
-import { elevenLabsTTS } from './tts/elevenlabs';
-import { ConversationMessage } from '../types';
+import { GeminiLiveSession } from './gemini-live';
+import { vobizAudioToGemini, geminiAudioToVobiz } from './audio-transcoder';
 import { sendWebhookEvent } from './webhook';
 
 interface CallSessionOptions {
   call: Call & { assistant: Assistant };
   ws: WebSocket;
+  streamSid?: string;
 }
 
+/**
+ * CallSession — one instance per active phone call.
+ *
+ * Audio pipeline:
+ *   Vobiz WS (mulaw 8kHz base64)
+ *     → vobizAudioToGemini()   [mulaw 8k → PCM 16k]
+ *     → GeminiLiveSession.sendAudio()
+ *     ← GeminiLiveSession.onAudio()  [PCM 24k]
+ *     ← geminiAudioToVobiz()   [PCM 24k → mulaw 8k base64]
+ *     → Vobiz WS media message
+ */
 export class CallSession {
   private call: Call & { assistant: Assistant };
   private ws: WebSocket;
-  private sttConnection: ListenLiveClient | null = null;
-  private conversationHistory: ConversationMessage[] = [];
-  private isProcessing = false;
-  private transcriptBuffer = '';
-  private silenceTimer: NodeJS.Timeout | null = null;
-  private streamSid: string | null = null;
+  private streamSid: string | null;
+  private gemini: GeminiLiveSession;
   private isClosed = false;
+  private audioQueue: Buffer[] = [];
+  private isSending = false;
 
-  constructor({ call, ws }: CallSessionOptions) {
+  constructor({ call, ws, streamSid }: CallSessionOptions) {
     this.call = call;
     this.ws = ws;
+    this.streamSid = streamSid || null;
+
+    this.gemini = new GeminiLiveSession({
+      systemPrompt: call.assistant.systemPrompt,
+      voiceName: call.assistant.ttsVoiceId || 'Puck',
+      languageCode: call.assistant.sttLanguage || 'en-US',
+      onAudio: this.handleGeminiAudio.bind(this),
+      onTranscript: this.handleTranscript.bind(this),
+      onError: this.handleGeminiError.bind(this),
+      onClose: this.handleGeminiClose.bind(this),
+    });
   }
 
   async start(): Promise<void> {
     const assistant = this.call.assistant;
 
-    // Initialize STT
-    this.sttConnection = deepgramSTT.createLiveTranscription(
-      assistant.sttLanguage,
-      assistant.sttModel,
-      this.onTranscript.bind(this),
-      this.onSTTError.bind(this)
-    );
-
-    // Update call status
-    await prisma.call.update({
-      where: { id: this.call.id },
-      data: { status: 'IN_PROGRESS', startedAt: new Date() },
-    });
-
-    // Send first message if configured
-    if (assistant.firstMessage) {
-      await this.speak(assistant.firstMessage);
-
-      this.conversationHistory.push({
-        role: 'assistant',
-        content: assistant.firstMessage,
+    try {
+      // Connect to Gemini Live
+      await this.gemini.connect({
+        systemPrompt: assistant.systemPrompt,
+        voiceName: assistant.ttsVoiceId || 'Puck',
+        languageCode: assistant.sttLanguage || 'en-US',
+        onAudio: this.handleGeminiAudio.bind(this),
+        onTranscript: this.handleTranscript.bind(this),
+        onError: this.handleGeminiError.bind(this),
+        onClose: this.handleGeminiClose.bind(this),
       });
 
-      await this.saveMessage('ASSISTANT', assistant.firstMessage);
-    }
+      // Update call status
+      await prisma.call.update({
+        where: { id: this.call.id },
+        data: { status: 'IN_PROGRESS', startedAt: new Date() },
+      });
 
-    await sendWebhookEvent(assistant, 'call.started', this.call);
+      // Send first message if configured
+      if (assistant.firstMessage) {
+        this.gemini.sendText(
+          `[SYSTEM: Say this exactly as the opening greeting]: ${assistant.firstMessage}`
+        );
+        await this.saveMessage('ASSISTANT', assistant.firstMessage);
+      }
+
+      await sendWebhookEvent(assistant, 'call.started', this.call);
+      console.log(`[CallSession ${this.call.id}] Started`);
+    } catch (err) {
+      console.error(`[CallSession ${this.call.id}] Failed to start:`, err);
+      await this.end('FAILED');
+    }
   }
 
-  processAudioChunk(audioData: Buffer): void {
-    if (this.sttConnection && !this.isClosed) {
-      this.sttConnection.send(audioData);
+  /**
+   * Called when Vobiz sends inbound audio (mulaw 8kHz, base64)
+   */
+  processAudioChunk(mulawBase64: string): void {
+    if (this.isClosed || !this.gemini.isConnected()) return;
+
+    try {
+      const pcm16k = vobizAudioToGemini(mulawBase64);
+      this.gemini.sendAudio(pcm16k);
+    } catch (err) {
+      console.error(`[CallSession ${this.call.id}] Audio processing error:`, err);
     }
   }
 
@@ -71,183 +102,137 @@ export class CallSession {
     this.streamSid = sid;
   }
 
-  private async onTranscript(result: {
-    transcript: string;
-    isFinal: boolean;
-    confidence?: number;
-  }): Promise<void> {
-    if (this.isClosed) return;
+  /**
+   * Gemini sends back PCM 24kHz audio → transcode → send to Vobiz
+   */
+  private handleGeminiAudio(pcm24kBuffer: Buffer): void {
+    if (this.isClosed || !this.streamSid) return;
 
-    if (!result.isFinal) {
-      // Clear silence timer on activity
-      if (this.silenceTimer) {
-        clearTimeout(this.silenceTimer);
-        this.silenceTimer = null;
-      }
+    // Queue for ordered delivery
+    this.audioQueue.push(pcm24kBuffer);
+    if (!this.isSending) {
+      this.flushAudioQueue();
+    }
+  }
+
+  private flushAudioQueue(): void {
+    if (this.audioQueue.length === 0) {
+      this.isSending = false;
       return;
     }
 
-    this.transcriptBuffer += ' ' + result.transcript;
-
-    // Debounce: wait for brief silence before processing
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-    }
-
-    this.silenceTimer = setTimeout(async () => {
-      const userInput = this.transcriptBuffer.trim();
-      this.transcriptBuffer = '';
-
-      if (userInput && !this.isProcessing) {
-        await this.processUserInput(userInput);
-      }
-    }, 500);
-  }
-
-  private async processUserInput(userInput: string): Promise<void> {
-    this.isProcessing = true;
-    const assistant = this.call.assistant;
+    this.isSending = true;
+    const chunk = this.audioQueue.shift()!;
 
     try {
-      console.log(`[CallSession ${this.call.id}] User: ${userInput}`);
+      const mulawBase64 = geminiAudioToVobiz(chunk);
 
-      // Check for end-call phrases
-      if (assistant.endCallPhrases.length > 0) {
-        const lowerInput = userInput.toLowerCase();
-        const shouldEnd = assistant.endCallPhrases.some((phrase) =>
-          lowerInput.includes(phrase.toLowerCase())
-        );
-        if (shouldEnd) {
-          if (assistant.endCallMessage) {
-            await this.speak(assistant.endCallMessage);
+      if (this.ws.readyState === WebSocket.OPEN && this.streamSid) {
+        this.ws.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid: this.streamSid,
+            media: { payload: mulawBase64 },
+          }),
+          () => {
+            // Send next chunk after this one is queued
+            setImmediate(() => this.flushAudioQueue());
           }
-          await this.end('COMPLETED');
-          return;
-        }
+        );
       }
-
-      // Save user message
-      this.conversationHistory.push({ role: 'user', content: userInput });
-      await this.saveMessage('USER', userInput);
-
-      // Get LLM response
-      let responseText = '';
-      for await (const chunk of claudeLLM.streamChat(
-        this.conversationHistory,
-        assistant.systemPrompt,
-        assistant.llmModel,
-        assistant.llmTemperature,
-        assistant.llmMaxTokens
-      )) {
-        responseText += chunk;
-      }
-
-      if (!responseText) {
-        this.isProcessing = false;
-        return;
-      }
-
-      console.log(`[CallSession ${this.call.id}] Assistant: ${responseText}`);
-
-      // Save assistant message
-      this.conversationHistory.push({ role: 'assistant', content: responseText });
-      await this.saveMessage('ASSISTANT', responseText);
-
-      // Speak the response
-      await this.speak(responseText);
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Error:`, err);
-    } finally {
-      this.isProcessing = false;
+      console.error(`[CallSession ${this.call.id}] Audio send error:`, err);
+      this.flushAudioQueue();
     }
   }
 
-  private async speak(text: string): Promise<void> {
-    if (this.isClosed || !this.streamSid) return;
+  /**
+   * Save transcript messages to DB
+   */
+  private async handleTranscript(text: string, role: 'user' | 'model'): Promise<void> {
+    if (!text.trim()) return;
 
-    const assistant = this.call.assistant;
+    const dbRole = role === 'user' ? 'USER' : 'ASSISTANT';
+    console.log(`[CallSession ${this.call.id}] ${dbRole}: ${text}`);
 
     try {
-      const audioBuffer = await elevenLabsTTS.synthesize({
-        text,
-        voiceId: assistant.ttsVoiceId,
-        model: assistant.ttsModel,
-        stability: assistant.ttsStability,
-        similarityBoost: assistant.ttsSimilarity,
-        speed: assistant.ttsSpeed,
-      });
-
-      // Send audio to Twilio via WebSocket media stream
-      const base64Audio = audioBuffer.toString('base64');
-      const mediaMessage = JSON.stringify({
-        event: 'media',
-        streamSid: this.streamSid,
-        media: {
-          payload: base64Audio,
-        },
-      });
-
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(mediaMessage);
-      }
+      await this.saveMessage(dbRole as 'USER' | 'ASSISTANT', text);
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] TTS error:`, err);
+      console.error(`[CallSession ${this.call.id}] Failed to save transcript:`, err);
     }
   }
 
-  private onSTTError(error: Error): void {
-    console.error(`[CallSession ${this.call.id}] STT error:`, error);
+  private handleGeminiError(err: Error): void {
+    console.error(`[CallSession ${this.call.id}] Gemini error:`, err);
+  }
+
+  private handleGeminiClose(): void {
+    if (!this.isClosed) {
+      console.log(`[CallSession ${this.call.id}] Gemini closed — ending call`);
+      this.end('COMPLETED').catch(console.error);
+    }
+  }
+
+  /**
+   * Send clear message to Vobiz to stop buffered audio (for barge-in)
+   */
+  clearAudio(): void {
+    if (this.ws.readyState === WebSocket.OPEN && this.streamSid) {
+      this.ws.send(
+        JSON.stringify({ event: 'clear', streamSid: this.streamSid })
+      );
+    }
+    this.audioQueue = [];
+    this.isSending = false;
   }
 
   async end(status: 'COMPLETED' | 'FAILED' | 'CANCELED' = 'COMPLETED'): Promise<void> {
     if (this.isClosed) return;
     this.isClosed = true;
 
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-    }
-
-    if (this.sttConnection) {
-      this.sttConnection.requestClose();
-    }
+    this.gemini.close();
+    this.audioQueue = [];
 
     const endedAt = new Date();
     const startedAt = this.call.startedAt || endedAt;
-    const duration = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
+    const duration = Math.floor(
+      (endedAt.getTime() - startedAt.getTime()) / 1000
+    );
 
-    await prisma.call.update({
-      where: { id: this.call.id },
-      data: { status, endedAt, duration },
-    });
+    try {
+      await prisma.call.update({
+        where: { id: this.call.id },
+        data: { status, endedAt, duration },
+      });
 
-    await sendWebhookEvent(this.call.assistant, 'call.ended', {
-      ...this.call,
-      status,
-      endedAt,
-      duration,
-    });
+      await sendWebhookEvent(this.call.assistant, 'call.ended', {
+        ...this.call,
+        status,
+        endedAt,
+        duration,
+      });
+    } catch (err) {
+      console.error(`[CallSession ${this.call.id}] Failed to update call:`, err);
+    }
 
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.close();
     }
+
+    console.log(`[CallSession ${this.call.id}] Ended — status: ${status}, duration: ${duration}s`);
   }
 
-  private async saveMessage(role: 'USER' | 'ASSISTANT' | 'SYSTEM', content: string): Promise<void> {
+  private async saveMessage(
+    role: 'USER' | 'ASSISTANT' | 'SYSTEM',
+    content: string
+  ): Promise<void> {
     await prisma.callMessage.create({
-      data: {
-        callId: this.call.id,
-        role: role as 'USER' | 'ASSISTANT' | 'SYSTEM' | 'TOOL',
-        content,
-      },
+      data: { callId: this.call.id, role, content },
     });
-  }
-
-  getTranscript(): ConversationMessage[] {
-    return this.conversationHistory;
   }
 }
 
-// Active call sessions registry
+// ─── Active session registry ─────────────────────────────────────────────────
 const activeSessions = new Map<string, CallSession>();
 
 export function registerSession(callId: string, session: CallSession): void {
