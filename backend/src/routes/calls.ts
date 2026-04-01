@@ -10,7 +10,7 @@ import { getSession } from '../services/call-session';
 const router = Router();
 
 const CreateCallSchema = z.object({
-  assistantId: z.string(),
+  agentId: z.string().uuid(),
   toNumber: z.string().min(10),
   fromNumber: z.string().optional(),
 });
@@ -21,16 +21,15 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
     const { page = '1', limit = '20', status } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    const where: Record<string, unknown> = { userId: req.user!.id };
+    const where: Record<string, unknown> = { workspaceId: req.user!.workspaceId };
     if (status) where.status = status;
 
     const [calls, total] = await Promise.all([
       prisma.call.findMany({
         where,
         include: {
-          assistant: { select: { id: true, name: true } },
-          phoneNumber: { select: { id: true, number: true, friendlyName: true } },
-          messages: { select: { id: true, role: true, content: true, timestamp: true } },
+          agent: { select: { id: true, name: true } },
+          messages: { select: { id: true, role: true, content: true, createdAt: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -54,11 +53,10 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
 router.get('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const call = await prisma.call.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
       include: {
-        assistant: true,
-        phoneNumber: true,
-        messages: { orderBy: { timestamp: 'asc' } },
+        agent: true,
+        messages: { orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -75,40 +73,38 @@ router.get('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Respon
 // POST /api/calls — initiate outbound call
 router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { assistantId, toNumber, fromNumber } = CreateCallSchema.parse(req.body);
+    const { agentId, toNumber, fromNumber } = CreateCallSchema.parse(req.body);
 
-    const assistant = await prisma.assistant.findFirst({
-      where: { id: assistantId, userId: req.user!.id },
+    const agent = await prisma.agent.findFirst({
+      where: { id: agentId, workspaceId: req.user!.workspaceId },
     });
-    if (!assistant) {
-      res.status(404).json({ error: 'Assistant not found' });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
       return;
     }
 
-    // Create call record first (we need the ID for the answer URL)
+    const from = fromNumber || config.vobiz.defaultFromNumber;
+
+    // Create call record first (need the ID for the answer URL)
     const call = await prisma.call.create({
       data: {
-        userId: req.user!.id,
-        assistantId,
-        type: 'OUTBOUND',
-        status: 'QUEUED',
-        toNumber,
-        fromNumber: fromNumber || config.vobiz.defaultFromNumber,
+        workspaceId: req.user!.workspaceId,
+        agentId,
+        direction: 'outbound',
+        type: 'manual',
+        status: 'queued',
+        phoneNumber: toNumber,
+        fromNumber: from,
       },
     });
 
-    // Answer URL returns XML with <Stream> pointing to our WebSocket
     const answerUrl = `${config.vobiz.webhookBaseUrl}/api/calls/${call.id}/answer`;
 
-    const vobizCallUuid = await vobizService.makeCall(
-      toNumber,
-      fromNumber || config.vobiz.defaultFromNumber,
-      answerUrl
-    );
+    const vobizCallUuid = await vobizService.makeCall(toNumber, from, answerUrl);
 
     const updatedCall = await prisma.call.update({
       where: { id: call.id },
-      data: { twilioCallSid: vobizCallUuid, status: 'RINGING' },
+      data: { vobizCallUuid, status: 'queued' },
     });
 
     res.status(201).json(updatedCall);
@@ -126,7 +122,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
 router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const call = await prisma.call.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
     if (!call) {
       res.status(404).json({ error: 'Call not found' });
@@ -134,11 +130,11 @@ router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Res
     }
 
     const session = getSession(call.id);
-    if (session) await session.end('CANCELED');
+    if (session) await session.end('canceled');
 
-    if (call.twilioCallSid) {
+    if (call.vobizCallUuid) {
       try {
-        await vobizService.hangupCall(call.twilioCallSid);
+        await vobizService.hangupCall(call.vobizCallUuid);
       } catch { /* ignore if already ended */ }
     }
 
@@ -148,39 +144,40 @@ router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Res
   }
 });
 
-// ─── Vobiz Webhooks ───────────────────────────────────────────────────────────
+// ─── Vobiz Webhooks (no auth — called by Vobiz servers) ──────────────────────
 
 /**
  * POST /api/calls/inbound
  * Vobiz calls this when an inbound call arrives on a purchased number.
- * We return XML with <Stream> to connect the call to our WebSocket.
+ * Returns XML with <Stream> to connect the call to our WebSocket.
  */
 router.post('/inbound', async (req: Request, res: Response) => {
   try {
     const { To, From, CallUUID } = req.body;
 
-    const phoneNumber = await prisma.phoneNumber.findUnique({
-      where: { number: To },
-      include: { assistant: true, user: true },
+    const phoneNumber = await prisma.phoneNumber.findFirst({
+      where: { number: To, isActive: true },
+      include: { agent: true },
     });
 
-    if (!phoneNumber?.assistant) {
+    if (!phoneNumber?.agent) {
       res.type('text/xml').send(
-        '<?xml version="1.0" encoding="UTF-8"?><Response><Speak>This number is not configured. Goodbye.</Speak><Hangup/></Response>'
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Response><Speak>This number is not configured. Goodbye.</Speak><Hangup/></Response>'
       );
       return;
     }
 
     const call = await prisma.call.create({
       data: {
-        userId: phoneNumber.userId,
-        assistantId: phoneNumber.assistant.id,
-        phoneNumberId: phoneNumber.id,
-        type: 'INBOUND',
-        status: 'RINGING',
-        toNumber: To,
-        fromNumber: From,
-        twilioCallSid: CallUUID,
+        workspaceId: phoneNumber.workspaceId ?? '',
+        agentId: phoneNumber.agent.id,
+        direction: 'inbound',
+        type: 'manual',
+        status: 'queued',
+        phoneNumber: From,
+        fromNumber: To,
+        vobizCallUuid: CallUUID,
       },
     });
 
@@ -189,14 +186,15 @@ router.post('/inbound', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[Calls] Inbound webhook error:', err);
     res.type('text/xml').send(
-      '<?xml version="1.0" encoding="UTF-8"?><Response><Speak>An error occurred.</Speak><Hangup/></Response>'
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<Response><Speak>An error occurred.</Speak><Hangup/></Response>'
     );
   }
 });
 
 /**
  * GET/POST /api/calls/:id/answer
- * Answer URL for outbound calls — Vobiz requests this when the callee picks up.
+ * Answer URL for outbound calls — Vobiz requests this when callee picks up.
  */
 router.all('/:id/answer', async (req: Request, res: Response) => {
   try {
@@ -206,7 +204,7 @@ router.all('/:id/answer', async (req: Request, res: Response) => {
       return;
     }
 
-    const xml = vobizService.generateOutboundXML(call.id);
+    const xml = vobizService.generateInboundXML(call.id);
     res.type('text/xml').send(xml);
   } catch {
     res.status(500).send('Error');
@@ -221,24 +219,15 @@ router.post('/status', async (req: Request, res: Response) => {
   try {
     const { CallUUID, CallStatus, Duration } = req.body;
 
-    const statusMap: Record<string, string> = {
-      'answer': 'IN_PROGRESS',
-      'ringing': 'RINGING',
-      'completed': 'COMPLETED',
-      'busy': 'BUSY',
-      'no-answer': 'NO_ANSWER',
-      'canceled': 'CANCELED',
-      'failed': 'FAILED',
-    };
-
-    const status = statusMap[CallStatus?.toLowerCase()] || 'FAILED';
+    const terminalStatuses = ['completed', 'busy', 'no-answer', 'canceled', 'failed'];
+    const status = CallStatus?.toLowerCase() ?? 'failed';
 
     await prisma.call.updateMany({
-      where: { twilioCallSid: CallUUID },
+      where: { vobizCallUuid: CallUUID },
       data: {
-        status: status as 'QUEUED' | 'RINGING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'BUSY' | 'NO_ANSWER' | 'CANCELED',
-        ...(Duration ? { duration: parseInt(Duration) } : {}),
-        ...(status === 'COMPLETED' ? { endedAt: new Date() } : {}),
+        status,
+        ...(Duration ? { durationSeconds: parseInt(Duration) } : {}),
+        ...(terminalStatuses.includes(status) ? { endedAt: new Date() } : {}),
       },
     });
 

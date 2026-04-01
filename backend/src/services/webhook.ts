@@ -1,39 +1,52 @@
-import { Assistant, Call } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { enqueueWebhook } from '../lib/queue';
+import crypto from 'crypto';
 
-export async function sendWebhookEvent(
-  assistant: Assistant,
+/**
+ * Dispatch a webhook event to all active endpoints for a workspace.
+ * - Creates a WebhookDelivery record (status: pending)
+ * - Enqueues to BullMQ for async delivery with HMAC signing + retries
+ */
+export async function dispatchWebhookEvent(
+  workspaceId: string,
   event: string,
-  call: Partial<Call>
+  payload: object
 ): Promise<void> {
-  if (!assistant.webhookUrl) return;
-
-  const payload = {
-    event,
-    call: {
-      id: call.id,
-      status: call.status,
-      type: call.type,
-      assistantId: call.assistantId,
-      startedAt: call.startedAt,
-      endedAt: call.endedAt,
-      duration: call.duration,
-      toNumber: call.toNumber,
-      fromNumber: call.fromNumber,
-    },
-    timestamp: new Date().toISOString(),
-  };
-
   try {
-    await fetch(assistant.webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Event': event,
+    const endpoints = await prisma.webhookEndpoint.findMany({
+      where: {
+        workspaceId,
+        isActive: true,
+        events: { has: event },
       },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
     });
+
+    if (endpoints.length === 0) return;
+
+    await Promise.all(
+      endpoints.map(async (endpoint: { id: string; url: string; secret: string }) => {
+        const deliveryId = crypto.randomUUID();
+
+        await prisma.webhookDelivery.create({
+          data: {
+            id: deliveryId,
+            webhookEndpointId: endpoint.id,
+            event,
+            payload,
+            status: 'pending',
+          },
+        });
+
+        await enqueueWebhook({
+          deliveryId,
+          url: endpoint.url,
+          secret: endpoint.secret,
+          event,
+          payload,
+        });
+      })
+    );
   } catch (err) {
-    console.error('[Webhook] Failed to send webhook:', err);
+    console.error(`[Webhook] dispatchWebhookEvent error (${event}):`, err);
   }
 }

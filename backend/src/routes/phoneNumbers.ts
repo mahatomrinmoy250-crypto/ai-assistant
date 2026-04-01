@@ -13,8 +13,8 @@ router.use(authMiddleware);
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const numbers = await prisma.phoneNumber.findMany({
-      where: { userId: req.user!.id },
-      include: { assistant: { select: { id: true, name: true } } },
+      where: { workspaceId: req.user!.workspaceId },
+      include: { agent: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'desc' },
     });
     res.json(numbers);
@@ -24,9 +24,9 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 // GET /api/phone-numbers/available?countryCode=IN
-router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/available', async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const { countryCode = 'IN', limit = '10' } = req.query;
+    const { countryCode = 'IN', limit = '10' } = _req.query;
     const numbers = await vobizService.listAvailableNumbers(
       countryCode as string,
       parseInt(limit as string)
@@ -45,7 +45,6 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
 
     const { uuid, number: purchased } = await vobizService.purchasePhoneNumber(number);
 
-    // Set webhook on the number immediately
     await vobizService.updateNumberWebhook(
       uuid,
       `${config.vobiz.webhookBaseUrl}/api/calls/inbound`
@@ -54,8 +53,8 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
     const phoneNumber = await prisma.phoneNumber.create({
       data: {
         number: purchased,
-        twilioSid: uuid,   // reusing field for Vobiz UUID
-        userId: req.user!.id,
+        sipTrunkId: uuid,
+        workspaceId: req.user!.workspaceId,
       },
     });
 
@@ -66,35 +65,33 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// PATCH /api/phone-numbers/:id — assign assistant
+// PATCH /api/phone-numbers/:id — assign agent
 router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
       return;
     }
 
-    const { assistantId } = z
-      .object({ assistantId: z.string().nullable() })
-      .parse(req.body);
+    const { agentId } = z.object({ agentId: z.string().uuid().nullable() }).parse(req.body);
 
-    if (assistantId) {
-      const assistant = await prisma.assistant.findFirst({
-        where: { id: assistantId, userId: req.user!.id },
+    if (agentId) {
+      const agent = await prisma.agent.findFirst({
+        where: { id: agentId, workspaceId: req.user!.workspaceId },
       });
-      if (!assistant) {
-        res.status(404).json({ error: 'Assistant not found' });
+      if (!agent) {
+        res.status(404).json({ error: 'Agent not found' });
         return;
       }
     }
 
     const phoneNumber = await prisma.phoneNumber.update({
       where: { id: req.params.id },
-      data: { assistantId },
-      include: { assistant: { select: { id: true, name: true } } },
+      data: { agentId },
+      include: { agent: { select: { id: true, name: true } } },
     });
 
     res.json(phoneNumber);
@@ -111,15 +108,15 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
       return;
     }
 
-    if (existing.twilioSid) {
-      await vobizService.releasePhoneNumber(existing.twilioSid);
+    if (existing.sipTrunkId) {
+      await vobizService.releasePhoneNumber(existing.sipTrunkId);
     }
 
     await prisma.phoneNumber.delete({ where: { id: req.params.id } });

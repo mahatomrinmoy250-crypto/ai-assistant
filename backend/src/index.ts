@@ -7,6 +7,8 @@ import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { errorHandler } from './middleware/errorHandler';
 import { setupCallWebSocket } from './websocket/call-ws';
+import { startWebhookWorker } from './lib/queue';
+import { getActiveSessionCount } from './services/call-session';
 import authRoutes from './routes/auth';
 import assistantsRoutes from './routes/assistants';
 import callsRoutes from './routes/calls';
@@ -44,7 +46,12 @@ app.use('/api', limiter);
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    serverId: config.serverId,
+    activeCalls: getActiveSessionCount(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Routes
@@ -61,11 +68,20 @@ app.use((_req, res) => {
 // Error handler
 app.use(errorHandler);
 
+// Start BullMQ webhook worker
+const webhookWorker = startWebhookWorker();
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('[Server] SIGTERM received, shutting down gracefully...');
+  await webhookWorker.close();
+  httpServer.close(() => process.exit(0));
+});
+
 // Start server
 httpServer.listen(config.port, () => {
-  console.log(
-    `[Server] Voice AI Platform running on http://localhost:${config.port}`
-  );
+  console.log(`[Server] Voice AI Platform running on http://localhost:${config.port}`);
+  console.log(`[Server] Server ID: ${config.serverId}`);
   console.log(`[Server] WebSocket server ready at ws://localhost:${config.port}/ws`);
   console.log(`[Server] Environment: ${config.nodeEnv}`);
 });

@@ -8,14 +8,13 @@ import {
   removeSession,
 } from '../services/call-session';
 
-interface TwilioMediaMessage {
+interface VobizMediaMessage {
   event: string;
   sequenceNumber?: string;
   streamSid?: string;
   start?: {
     streamSid: string;
-    callSid: string;
-    accountSid: string;
+    callSid: string;   // Vobiz uses callSid or CallUUID
     tracks: string[];
     mediaFormat: {
       encoding: string;
@@ -27,10 +26,9 @@ interface TwilioMediaMessage {
     track: string;
     chunk: string;
     timestamp: string;
-    payload: string;
+    payload: string;  // base64 mulaw
   };
   stop?: {
-    accountSid: string;
     callSid: string;
   };
 }
@@ -52,7 +50,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
     let session: CallSession | null = null;
 
     ws.on('message', async (data: Buffer) => {
-      let message: TwilioMediaMessage;
+      let message: VobizMediaMessage;
 
       try {
         message = JSON.parse(data.toString());
@@ -62,32 +60,47 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
 
       switch (message.event) {
         case 'connected':
-          console.log(`[WS ${callId}] Twilio media stream connected`);
+          console.log(`[WS ${callId}] Vobiz media stream connected`);
           break;
 
         case 'start': {
-          console.log(`[WS ${callId}] Stream started`);
           const streamSid = message.start?.streamSid;
+          console.log(`[WS ${callId}] Stream started, sid: ${streamSid}`);
 
           try {
             const call = await prisma.call.findUnique({
               where: { id: callId },
-              include: { assistant: true },
+              include: { agent: true },
             });
 
-            if (!call) {
-              console.error(`[WS ${callId}] Call not found`);
+            if (!call || !call.agent) {
+              console.error(`[WS ${callId}] Call or agent not found`);
               ws.close();
               return;
             }
 
-            session = new CallSession({ call, ws });
+            const agent = call.agent;
+
+            session = new CallSession({
+              data: {
+                callId: call.id,
+                workspaceId: call.workspaceId ?? '',
+                agentId: agent.id,
+                agentName: agent.name,
+                systemPrompt: agent.systemPrompt,
+                greetingMessage: agent.greetingMessage,
+                llmModel: agent.llmModel,
+                ttsVoice: agent.ttsVoice,
+                language: agent.language,
+                maxDurationMinutes: agent.maxDurationMinutes,
+                silenceTimeoutSeconds: agent.silenceTimeoutSeconds,
+                vobizCallUuid: call.vobizCallUuid ?? null,
+              },
+              ws,
+              streamSid: streamSid,
+            });
+
             registerSession(callId, session);
-
-            if (streamSid) {
-              session.setStreamSid(streamSid);
-            }
-
             await session.start();
           } catch (err) {
             console.error(`[WS ${callId}] Error starting session:`, err);
@@ -99,8 +112,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
         case 'media': {
           const payload = message.media?.payload;
           if (payload && session) {
-            const audioBuffer = Buffer.from(payload, 'base64');
-            session.processAudioChunk(audioBuffer);
+            session.processAudioChunk(payload);
           }
           break;
         }
@@ -109,7 +121,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
           console.log(`[WS ${callId}] Stream stopped`);
           const activeSession = getSession(callId);
           if (activeSession) {
-            await activeSession.end('COMPLETED');
+            await activeSession.end('completed');
             removeSession(callId);
           }
           break;
@@ -121,7 +133,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
       console.log(`[WS ${callId}] WebSocket closed`);
       const activeSession = getSession(callId);
       if (activeSession) {
-        await activeSession.end('COMPLETED');
+        await activeSession.end('completed');
         removeSession(callId);
       }
     });

@@ -1,91 +1,83 @@
 import { Router, Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { authMiddleware } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { nanoid } from 'nanoid';
 
 const router = Router();
 
-const RegisterSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  name: z.string().optional(),
+/**
+ * Auth model: Supabase Auth handles user identity.
+ * After Supabase login, the frontend exchanges the Supabase JWT for our
+ * platform JWT which includes workspaceId.
+ *
+ * POST /api/auth/workspace-token
+ * Accepts a Supabase JWT, looks up the workspace, returns our platform JWT.
+ *
+ * On first login (new user), we auto-create a workspace.
+ */
+
+const WorkspaceTokenSchema = z.object({
+  supabaseToken: z.string(),
+  workspaceName: z.string().optional(),
 });
 
-const LoginSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
-});
-
-// POST /api/auth/register
-router.post('/register', async (req: Request, res: Response) => {
+// POST /api/auth/workspace-token
+// Exchange Supabase JWT → platform JWT with workspaceId
+router.post('/workspace-token', async (req: Request, res: Response) => {
   try {
-    const { email, password, name } = RegisterSchema.parse(req.body);
+    const { supabaseToken, workspaceName } = WorkspaceTokenSchema.parse(req.body);
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      res.status(409).json({ error: 'Email already registered' });
+    // Verify the Supabase JWT (uses same JWT_SECRET or SUPABASE_JWT_SECRET)
+    const jwtSecret = process.env.SUPABASE_JWT_SECRET || config.jwt.secret;
+    let payload: { sub: string; email: string };
+
+    try {
+      payload = jwt.verify(supabaseToken, jwtSecret) as { sub: string; email: string };
+    } catch {
+      res.status(401).json({ error: 'Invalid Supabase token' });
       return;
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({
-      data: { email, passwordHash, name },
-      select: { id: true, email: true, name: true, createdAt: true },
+    const { sub: userId, email } = payload;
+
+    // Find or create workspace
+    let workspace = await prisma.workspace.findFirst({
+      where: { ownerId: userId },
     });
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
-    );
-
-    res.status(201).json({ user, token });
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      res.status(400).json({ error: 'Validation error', details: err.errors });
-    } else {
-      res.status(500).json({ error: 'Registration failed' });
-    }
-  }
-});
-
-// POST /api/auth/login
-router.post('/login', async (req: Request, res: Response) => {
-  try {
-    const { email, password } = LoginSchema.parse(req.body);
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      res.status(401).json({ error: 'Invalid credentials' });
-      return;
-    }
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) {
-      res.status(401).json({ error: 'Invalid credentials' });
-      return;
+    if (!workspace) {
+      workspace = await prisma.workspace.create({
+        data: {
+          ownerId: userId,
+          name: workspaceName || email.split('@')[0] + "'s Workspace",
+        },
+      });
     }
 
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { sub: userId, email, workspaceId: workspace.id },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
     );
 
     res.json({
-      user: { id: user.id, email: user.email, name: user.name },
       token,
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        creditsBalance: workspace.creditsBalance,
+      },
     });
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: err.errors });
     } else {
-      res.status(500).json({ error: 'Login failed' });
+      console.error('[Auth] workspace-token error:', err);
+      res.status(500).json({ error: 'Authentication failed' });
     }
   }
 });
@@ -93,13 +85,13 @@ router.post('/login', async (req: Request, res: Response) => {
 // GET /api/auth/me
 router.get('/me', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.id },
-      select: { id: true, email: true, name: true, createdAt: true },
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: req.user!.workspaceId },
+      select: { id: true, name: true, creditsBalance: true, createdAt: true },
     });
-    res.json(user);
+    res.json({ userId: req.user!.id, email: req.user!.email, workspace });
   } catch {
-    res.status(500).json({ error: 'Failed to get user' });
+    res.status(500).json({ error: 'Failed to get profile' });
   }
 });
 
@@ -107,8 +99,8 @@ router.get('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
 router.get('/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const keys = await prisma.apiKey.findMany({
-      where: { userId: req.user!.id },
-      select: { id: true, name: true, key: true, lastUsed: true, createdAt: true },
+      where: { workspaceId: req.user!.workspaceId },
+      select: { id: true, name: true, keyPrefix: true, lastUsedAt: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     });
     res.json(keys);
@@ -121,14 +113,23 @@ router.get('/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: R
 router.post('/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
-    const key = `sk-${nanoid(32)}`;
+
+    const rawKey = `sk-${crypto.randomBytes(24).toString('hex')}`;
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const keyPrefix = rawKey.slice(0, 10); // "sk-" + 7 chars
 
     const apiKey = await prisma.apiKey.create({
-      data: { name, key, userId: req.user!.id },
-      select: { id: true, name: true, key: true, createdAt: true },
+      data: {
+        name,
+        keyHash,
+        keyPrefix,
+        workspaceId: req.user!.workspaceId,
+      },
+      select: { id: true, name: true, keyPrefix: true, createdAt: true },
     });
 
-    res.status(201).json(apiKey);
+    // Return the raw key ONCE — it won't be retrievable again
+    res.status(201).json({ ...apiKey, key: rawKey });
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: err.errors });
@@ -142,7 +143,7 @@ router.post('/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: 
 router.delete('/api-keys/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const apiKey = await prisma.apiKey.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
 
     if (!apiKey) {

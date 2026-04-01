@@ -1,100 +1,131 @@
-import { Assistant, Call } from '@prisma/client';
 import { WebSocket } from 'ws';
 import { prisma } from '../lib/prisma';
+import {
+  setCallSession,
+  deleteCallSession,
+  incrementActiveCalls,
+  decrementActiveCalls,
+} from '../lib/redis';
 import { GeminiLiveSession } from './gemini-live';
 import { vobizAudioToGemini, geminiAudioToVobiz } from './audio-transcoder';
-import { sendWebhookEvent } from './webhook';
+import { dispatchWebhookEvent } from './webhook';
+import { config } from '../config';
+
+interface CallSessionData {
+  callId: string;
+  workspaceId: string;
+  agentId: string;
+  agentName: string;
+  systemPrompt: string;
+  greetingMessage: string;
+  llmModel: string;
+  ttsVoice: string;
+  language: string;
+  maxDurationMinutes: number;
+  silenceTimeoutSeconds: number;
+  vobizCallUuid: string | null;
+}
 
 interface CallSessionOptions {
-  call: Call & { assistant: Assistant };
+  data: CallSessionData;
   ws: WebSocket;
   streamSid?: string;
 }
 
 /**
- * CallSession — one instance per active phone call.
+ * CallSession — one instance per active phone call on THIS server.
  *
- * Audio pipeline:
- *   Vobiz WS (mulaw 8kHz base64)
- *     → vobizAudioToGemini()   [mulaw 8k → PCM 16k]
- *     → GeminiLiveSession.sendAudio()
- *     ← GeminiLiveSession.onAudio()  [PCM 24k]
- *     ← geminiAudioToVobiz()   [PCM 24k → mulaw 8k base64]
- *     → Vobiz WS media message
+ * Scaling model:
+ *   - Nginx uses ip_hash sticky sessions → same caller always hits same server
+ *   - Redis stores callId → serverId mapping for cross-server lookups
+ *   - Each server holds its own in-memory sessions (audio is local)
  */
 export class CallSession {
-  private call: Call & { assistant: Assistant };
+  private data: CallSessionData;
   private ws: WebSocket;
   private streamSid: string | null;
   private gemini: GeminiLiveSession;
   private isClosed = false;
   private audioQueue: Buffer[] = [];
   private isSending = false;
+  private maxDurationTimer: NodeJS.Timeout | null = null;
 
-  constructor({ call, ws, streamSid }: CallSessionOptions) {
-    this.call = call;
+  constructor({ data, ws, streamSid }: CallSessionOptions) {
+    this.data = data;
     this.ws = ws;
     this.streamSid = streamSid || null;
 
     this.gemini = new GeminiLiveSession({
-      systemPrompt: call.assistant.systemPrompt,
-      voiceName: call.assistant.ttsVoiceId || 'Puck',
-      languageCode: call.assistant.sttLanguage || 'en-US',
+      systemPrompt: data.systemPrompt,
+      voiceName: data.ttsVoice,
+      languageCode: data.language,
       onAudio: this.handleGeminiAudio.bind(this),
       onTranscript: this.handleTranscript.bind(this),
-      onError: this.handleGeminiError.bind(this),
-      onClose: this.handleGeminiClose.bind(this),
+      onError: (e) => console.error(`[CallSession ${data.callId}] Gemini error:`, e),
+      onClose: () => this.end('completed').catch(console.error),
     });
   }
 
   async start(): Promise<void> {
-    const assistant = this.call.assistant;
-
     try {
-      // Connect to Gemini Live
       await this.gemini.connect({
-        systemPrompt: assistant.systemPrompt,
-        voiceName: assistant.ttsVoiceId || 'Puck',
-        languageCode: assistant.sttLanguage || 'en-US',
+        systemPrompt: this.data.systemPrompt,
+        voiceName: this.data.ttsVoice,
+        languageCode: this.data.language,
         onAudio: this.handleGeminiAudio.bind(this),
         onTranscript: this.handleTranscript.bind(this),
-        onError: this.handleGeminiError.bind(this),
-        onClose: this.handleGeminiClose.bind(this),
+        onError: (e) => console.error(`[CallSession ${this.data.callId}]`, e),
+        onClose: () => this.end('completed').catch(console.error),
       });
+
+      // Track in Redis
+      await setCallSession(this.data.callId, {
+        serverId: config.serverId,
+        workspaceId: this.data.workspaceId,
+        agentId: this.data.agentId,
+      });
+      await incrementActiveCalls(this.data.workspaceId);
 
       // Update call status
       await prisma.call.update({
-        where: { id: this.call.id },
-        data: { status: 'IN_PROGRESS', startedAt: new Date() },
+        where: { id: this.data.callId },
+        data: { status: 'in-progress' },
       });
 
-      // Send first message if configured
-      if (assistant.firstMessage) {
+      // Max duration enforcement
+      this.maxDurationTimer = setTimeout(
+        () => this.end('completed'),
+        this.data.maxDurationMinutes * 60 * 1000
+      );
+
+      // Send greeting
+      if (this.data.greetingMessage) {
         this.gemini.sendText(
-          `[SYSTEM: Say this exactly as the opening greeting]: ${assistant.firstMessage}`
+          `[Start the call by saying exactly]: ${this.data.greetingMessage}`
         );
-        await this.saveMessage('ASSISTANT', assistant.firstMessage);
+        await this.saveMessage('assistant', this.data.greetingMessage);
       }
 
-      await sendWebhookEvent(assistant, 'call.started', this.call);
-      console.log(`[CallSession ${this.call.id}] Started`);
+      await dispatchWebhookEvent(this.data.workspaceId, 'call.started', {
+        callId: this.data.callId,
+        agentId: this.data.agentId,
+        agentName: this.data.agentName,
+      });
+
+      console.log(`[CallSession ${this.data.callId}] Started — agent: ${this.data.agentName}`);
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Failed to start:`, err);
-      await this.end('FAILED');
+      console.error(`[CallSession ${this.data.callId}] Start failed:`, err);
+      await this.end('failed');
     }
   }
 
-  /**
-   * Called when Vobiz sends inbound audio (mulaw 8kHz, base64)
-   */
   processAudioChunk(mulawBase64: string): void {
     if (this.isClosed || !this.gemini.isConnected()) return;
-
     try {
       const pcm16k = vobizAudioToGemini(mulawBase64);
       this.gemini.sendAudio(pcm16k);
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Audio processing error:`, err);
+      console.error(`[CallSession ${this.data.callId}] Audio error:`, err);
     }
   }
 
@@ -102,17 +133,10 @@ export class CallSession {
     this.streamSid = sid;
   }
 
-  /**
-   * Gemini sends back PCM 24kHz audio → transcode → send to Vobiz
-   */
   private handleGeminiAudio(pcm24kBuffer: Buffer): void {
     if (this.isClosed || !this.streamSid) return;
-
-    // Queue for ordered delivery
     this.audioQueue.push(pcm24kBuffer);
-    if (!this.isSending) {
-      this.flushAudioQueue();
-    }
+    if (!this.isSending) this.flushAudioQueue();
   }
 
   private flushAudioQueue(): void {
@@ -120,13 +144,11 @@ export class CallSession {
       this.isSending = false;
       return;
     }
-
     this.isSending = true;
     const chunk = this.audioQueue.shift()!;
 
     try {
       const mulawBase64 = geminiAudioToVobiz(chunk);
-
       if (this.ws.readyState === WebSocket.OPEN && this.streamSid) {
         this.ws.send(
           JSON.stringify({
@@ -134,105 +156,98 @@ export class CallSession {
             streamSid: this.streamSid,
             media: { payload: mulawBase64 },
           }),
-          () => {
-            // Send next chunk after this one is queued
-            setImmediate(() => this.flushAudioQueue());
-          }
+          () => setImmediate(() => this.flushAudioQueue())
         );
       }
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Audio send error:`, err);
+      console.error(`[CallSession ${this.data.callId}] Audio send error:`, err);
       this.flushAudioQueue();
     }
   }
 
-  /**
-   * Save transcript messages to DB
-   */
   private async handleTranscript(text: string, role: 'user' | 'model'): Promise<void> {
     if (!text.trim()) return;
-
-    const dbRole = role === 'user' ? 'USER' : 'ASSISTANT';
-    console.log(`[CallSession ${this.call.id}] ${dbRole}: ${text}`);
-
-    try {
-      await this.saveMessage(dbRole as 'USER' | 'ASSISTANT', text);
-    } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Failed to save transcript:`, err);
-    }
+    const dbRole = role === 'user' ? 'user' : 'assistant';
+    console.log(`[CallSession ${this.data.callId}] ${dbRole.toUpperCase()}: ${text}`);
+    await this.saveMessage(dbRole, text).catch(console.error);
   }
 
-  private handleGeminiError(err: Error): void {
-    console.error(`[CallSession ${this.call.id}] Gemini error:`, err);
-  }
-
-  private handleGeminiClose(): void {
-    if (!this.isClosed) {
-      console.log(`[CallSession ${this.call.id}] Gemini closed — ending call`);
-      this.end('COMPLETED').catch(console.error);
-    }
-  }
-
-  /**
-   * Send clear message to Vobiz to stop buffered audio (for barge-in)
-   */
   clearAudio(): void {
     if (this.ws.readyState === WebSocket.OPEN && this.streamSid) {
-      this.ws.send(
-        JSON.stringify({ event: 'clear', streamSid: this.streamSid })
-      );
+      this.ws.send(JSON.stringify({ event: 'clear', streamSid: this.streamSid }));
     }
     this.audioQueue = [];
     this.isSending = false;
   }
 
-  async end(status: 'COMPLETED' | 'FAILED' | 'CANCELED' = 'COMPLETED'): Promise<void> {
+  async end(outcome: 'completed' | 'failed' | 'canceled' = 'completed'): Promise<void> {
     if (this.isClosed) return;
     this.isClosed = true;
 
+    if (this.maxDurationTimer) clearTimeout(this.maxDurationTimer);
     this.gemini.close();
     this.audioQueue = [];
 
     const endedAt = new Date();
-    const startedAt = this.call.startedAt || endedAt;
-    const duration = Math.floor(
-      (endedAt.getTime() - startedAt.getTime()) / 1000
-    );
 
     try {
+      // Calculate cost in rupees: ~₹0.5/min (Gemini + Vobiz combined)
+      const call = await prisma.call.findUnique({ where: { id: this.data.callId } });
+      const durationSeconds = call?.createdAt
+        ? Math.floor((endedAt.getTime() - new Date(call.createdAt).getTime()) / 1000)
+        : 0;
+      const costRupees = parseFloat(((durationSeconds / 60) * 0.5).toFixed(2));
+
       await prisma.call.update({
-        where: { id: this.call.id },
-        data: { status, endedAt, duration },
+        where: { id: this.data.callId },
+        data: { status: outcome, outcome, endedAt, durationSeconds, costRupees },
       });
 
-      await sendWebhookEvent(this.call.assistant, 'call.ended', {
-        ...this.call,
-        status,
-        endedAt,
-        duration,
+      // Deduct credits from workspace
+      await prisma.workspace.update({
+        where: { id: this.data.workspaceId },
+        data: { creditsBalance: { decrement: costRupees } },
       });
+
+      // Log billing transaction
+      await prisma.billingTransaction.create({
+        data: {
+          workspaceId: this.data.workspaceId,
+          callId: this.data.callId,
+          amount: -costRupees,
+          type: 'call_deduction',
+          description: `Call ${this.data.callId} — ${durationSeconds}s`,
+        },
+      });
+
+      await deleteCallSession(this.data.callId);
+      await decrementActiveCalls(this.data.workspaceId);
+
+      await dispatchWebhookEvent(this.data.workspaceId, 'call.ended', {
+        callId: this.data.callId,
+        agentId: this.data.agentId,
+        outcome,
+        durationSeconds,
+        costRupees,
+      });
+
+      console.log(`[CallSession ${this.data.callId}] Ended — ${outcome}, ${durationSeconds}s, ₹${costRupees}`);
     } catch (err) {
-      console.error(`[CallSession ${this.call.id}] Failed to update call:`, err);
+      console.error(`[CallSession ${this.data.callId}] End error:`, err);
     }
 
-    if (this.ws.readyState === WebSocket.OPEN) {
-      this.ws.close();
-    }
-
-    console.log(`[CallSession ${this.call.id}] Ended — status: ${status}, duration: ${duration}s`);
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.close();
   }
 
-  private async saveMessage(
-    role: 'USER' | 'ASSISTANT' | 'SYSTEM',
-    content: string
-  ): Promise<void> {
+  private async saveMessage(role: 'user' | 'assistant' | 'system', content: string): Promise<void> {
     await prisma.callMessage.create({
-      data: { callId: this.call.id, role, content },
+      data: { callId: this.data.callId, role, content },
     });
   }
 }
 
-// ─── Active session registry ─────────────────────────────────────────────────
+// ─── Per-server in-memory session registry ───────────────────────────────────
+// Sticky sessions (Nginx ip_hash) ensure each call always hits the same server
 const activeSessions = new Map<string, CallSession>();
 
 export function registerSession(callId: string, session: CallSession): void {
@@ -245,4 +260,8 @@ export function getSession(callId: string): CallSession | undefined {
 
 export function removeSession(callId: string): void {
   activeSessions.delete(callId);
+}
+
+export function getActiveSessionCount(): number {
+  return activeSessions.size;
 }

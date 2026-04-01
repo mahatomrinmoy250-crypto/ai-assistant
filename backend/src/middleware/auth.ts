@@ -1,12 +1,14 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { AuthenticatedRequest } from '../types';
 
 interface JWTPayload {
-  userId: string;
+  sub: string;      // Supabase Auth user UUID
   email: string;
+  workspaceId?: string;
 }
 
 export async function authMiddleware(
@@ -21,12 +23,13 @@ export async function authMiddleware(
     return;
   }
 
-  // Support both Bearer token (JWT) and API key (prefix: "sk-")
+  // API key: "Bearer sk-..."
   if (authHeader.startsWith('Bearer sk-')) {
     await handleApiKey(req, res, next, authHeader.slice(7));
     return;
   }
 
+  // JWT: "Bearer <token>"
   if (authHeader.startsWith('Bearer ')) {
     await handleJWT(req, res, next, authHeader.slice(7));
     return;
@@ -43,7 +46,24 @@ async function handleJWT(
 ): Promise<void> {
   try {
     const payload = jwt.verify(token, config.jwt.secret) as JWTPayload;
-    req.user = { id: payload.userId, email: payload.email };
+    const userId = payload.sub;
+
+    // Lookup workspace for this user
+    let workspaceId = payload.workspaceId;
+    if (!workspaceId) {
+      const workspace = await prisma.workspace.findFirst({
+        where: { ownerId: userId },
+        select: { id: true },
+      });
+      workspaceId = workspace?.id;
+    }
+
+    if (!workspaceId) {
+      res.status(403).json({ error: 'No workspace found for this user' });
+      return;
+    }
+
+    req.user = { id: userId, email: payload.email, workspaceId };
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -57,9 +77,10 @@ async function handleApiKey(
   key: string
 ): Promise<void> {
   try {
+    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
     const apiKey = await prisma.apiKey.findUnique({
-      where: { key },
-      include: { user: { select: { id: true, email: true } } },
+      where: { keyHash },
+      include: { workspace: { select: { id: true, ownerId: true } } },
     });
 
     if (!apiKey) {
@@ -67,12 +88,17 @@ async function handleApiKey(
       return;
     }
 
-    await prisma.apiKey.update({
+    // Update last used timestamp (fire and forget)
+    prisma.apiKey.update({
       where: { id: apiKey.id },
-      data: { lastUsed: new Date() },
-    });
+      data: { lastUsedAt: new Date() },
+    }).catch(() => {});
 
-    req.user = { id: apiKey.user.id, email: apiKey.user.email };
+    req.user = {
+      id: apiKey.workspace.ownerId,
+      email: '',
+      workspaceId: apiKey.workspace.id,
+    };
     next();
   } catch {
     res.status(500).json({ error: 'Authentication error' });

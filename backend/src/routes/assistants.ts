@@ -2,83 +2,66 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
-import { AuthenticatedRequest, CreateAssistantDto } from '../types';
+import { AuthenticatedRequest } from '../types';
 
 const router = Router();
 router.use(authMiddleware);
 
-const AssistantSchema = z.object({
+const AgentSchema = z.object({
   name: z.string().min(1).max(100),
+  language: z.string().optional(),
   systemPrompt: z.string().min(1),
-  firstMessage: z.string().optional(),
-  llmProvider: z.string().optional(),
+  greetingMessage: z.string().optional(),
   llmModel: z.string().optional(),
-  llmTemperature: z.number().min(0).max(1).optional(),
-  llmMaxTokens: z.number().min(1).max(4096).optional(),
-  sttProvider: z.string().optional(),
-  sttLanguage: z.string().optional(),
-  sttModel: z.string().optional(),
-  ttsProvider: z.string().optional(),
-  ttsVoiceId: z.string().optional(),
-  ttsModel: z.string().optional(),
-  ttsStability: z.number().min(0).max(1).optional(),
-  ttsSimilarity: z.number().min(0).max(1).optional(),
-  ttsSpeed: z.number().min(0.5).max(2).optional(),
-  endCallMessage: z.string().optional(),
-  endCallPhrases: z.array(z.string()).optional(),
-  maxCallDuration: z.number().min(60).max(14400).optional(),
-  webhookUrl: z.string().url().optional(),
+  ttsVoice: z.string().optional(),
+  maxDurationMinutes: z.number().min(1).max(60).optional(),
+  silenceTimeoutSeconds: z.number().min(5).max(120).optional(),
+  transferNumber: z.string().optional(),
 });
 
-// GET /api/assistants
+// GET /api/assistants  (agents)
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const assistants = await prisma.assistant.findMany({
-      where: { userId: req.user!.id },
+    const agents = await prisma.agent.findMany({
+      where: { workspaceId: req.user!.workspaceId },
       orderBy: { createdAt: 'desc' },
     });
-    res.json(assistants);
+    res.json(agents);
   } catch {
-    res.status(500).json({ error: 'Failed to get assistants' });
+    res.status(500).json({ error: 'Failed to get agents' });
   }
 });
 
 // GET /api/assistants/:id
 router.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const assistant = await prisma.assistant.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+    const agent = await prisma.agent.findFirst({
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
 
-    if (!assistant) {
-      res.status(404).json({ error: 'Assistant not found' });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
       return;
     }
-
-    res.json(assistant);
+    res.json(agent);
   } catch {
-    res.status(500).json({ error: 'Failed to get assistant' });
+    res.status(500).json({ error: 'Failed to get agent' });
   }
 });
 
 // POST /api/assistants
 router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const data = AssistantSchema.parse(req.body) as CreateAssistantDto;
-
-    const assistant = await prisma.assistant.create({
-      data: {
-        ...data,
-        userId: req.user!.id,
-      },
+    const data = AgentSchema.parse(req.body);
+    const agent = await prisma.agent.create({
+      data: { ...data, workspaceId: req.user!.workspaceId },
     });
-
-    res.status(201).json(assistant);
+    res.status(201).json(agent);
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: err.errors });
     } else {
-      res.status(500).json({ error: 'Failed to create assistant' });
+      res.status(500).json({ error: 'Failed to create agent' });
     }
   }
 });
@@ -86,27 +69,22 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
 // PATCH /api/assistants/:id
 router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const existing = await prisma.assistant.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+    const existing = await prisma.agent.findFirst({
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
-
     if (!existing) {
-      res.status(404).json({ error: 'Assistant not found' });
+      res.status(404).json({ error: 'Agent not found' });
       return;
     }
 
-    const data = AssistantSchema.partial().parse(req.body);
-    const assistant = await prisma.assistant.update({
-      where: { id: req.params.id },
-      data,
-    });
-
-    res.json(assistant);
+    const data = AgentSchema.partial().parse(req.body);
+    const agent = await prisma.agent.update({ where: { id: req.params.id }, data });
+    res.json(agent);
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: err.errors });
     } else {
-      res.status(500).json({ error: 'Failed to update assistant' });
+      res.status(500).json({ error: 'Failed to update agent' });
     }
   }
 });
@@ -114,19 +92,17 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
 // DELETE /api/assistants/:id
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const existing = await prisma.assistant.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+    const existing = await prisma.agent.findFirst({
+      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
     });
-
     if (!existing) {
-      res.status(404).json({ error: 'Assistant not found' });
+      res.status(404).json({ error: 'Agent not found' });
       return;
     }
-
-    await prisma.assistant.delete({ where: { id: req.params.id } });
+    await prisma.agent.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch {
-    res.status(500).json({ error: 'Failed to delete assistant' });
+    res.status(500).json({ error: 'Failed to delete agent' });
   }
 });
 

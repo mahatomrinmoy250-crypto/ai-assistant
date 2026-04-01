@@ -1,169 +1,298 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+// ─── Auth (Supabase Auth handles users) ──────────────────────────────────────
+model Workspace {
+  id              String   @id @default(uuid())
+  ownerId         String   @map("owner_id")
+  name            String
+  creditsBalance  Decimal  @default(50.0) @map("credits_balance")
+  avgBookingValue Decimal  @default(0.0) @map("avg_booking_value")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  apiKeys      ApiKey[]
-  assistants   Assistant[]
-  phoneNumbers PhoneNumber[]
-  calls        Call[]
+  agents           Agent[]
+  phoneNumbers     PhoneNumber[]
+  calls            Call[]
+  campaigns        Campaign[]
+  contactLists     ContactList[]
+  contacts         Contact[]
+  knowledgeBases   KnowledgeBase[]
+  apiKeys          ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
+  billingTxns      BillingTransaction[]
+
+  @@map("workspaces")
 }
 
 model ApiKey {
-  id        String    @id @default(cuid())
-  key       String    @unique
-  name      String
-  userId    String
-  lastUsed  DateTime?
-  createdAt DateTime  @default(now())
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  name        String
+  keyHash     String    @unique @map("key_hash")
+  keyPrefix   String    @map("key_prefix")
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
 }
 
-model Assistant {
-  id          String   @id @default(cuid())
-  name        String
-  userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model Agent {
+  id                    String   @id @default(uuid())
+  workspaceId           String?  @map("workspace_id")
+  name                  String
+  language              String   @default("hi-IN")
+  status                String   @default("active")
+  systemPrompt          String   @default("") @map("system_prompt")
+  greetingMessage       String   @default("") @map("greeting_message")
+  llmModel              String   @default("gemini-3.1-flash-live-preview") @map("llm_model")
+  ttsVoice              String   @default("Leda") @map("tts_voice")
+  maxDurationMinutes    Int      @default(10) @map("max_duration_minutes")
+  silenceTimeoutSeconds Int      @default(30) @map("silence_timeout_seconds")
+  transferNumber        String?  @map("transfer_number")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
-  // System prompt / personality
-  systemPrompt     String   @db.Text
-  firstMessage     String?
-
-  // Gemini Live Configuration (replaces separate STT + LLM + TTS)
-  llmProvider      String   @default("gemini")
-  llmModel         String   @default("gemini-3.1-flash-live-preview")
-  llmTemperature   Float    @default(0.7)
-  llmMaxTokens     Int      @default(500)
-
-  // STT Configuration (language for Gemini Live)
-  sttProvider      String   @default("gemini")
-  sttLanguage      String   @default("en-US")
-  sttModel         String   @default("gemini-3.1-flash-live-preview")
-
-  // TTS / Voice Configuration (Gemini voice name)
-  ttsProvider      String   @default("gemini")
-  ttsVoiceId       String   @default("Puck")   // Gemini voice: Puck, Charon, Kore, Fenrir, Aoede
-  ttsModel         String   @default("gemini-3.1-flash-live-preview")
-  ttsStability     Float    @default(0.5)
-  ttsSimilarity    Float    @default(0.75)
-  ttsSpeed         Float    @default(1.0)
-
-  // Interruption settings
-  endCallMessage   String?
-  endCallPhrases   String[] @default([])
-  maxCallDuration  Int      @default(3600) // seconds
-
-  // Webhook
-  webhookUrl       String?
-
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace        Workspace?        @relation(fields: [workspaceId], references: [id])
   phoneNumbers     PhoneNumber[]
   calls            Call[]
+  campaigns        Campaign[]
+  knowledgeBases   AgentKnowledgeBase[]
+
+  @@map("agents")
 }
 
 model PhoneNumber {
-  id            String    @id @default(cuid())
-  number        String    @unique  // E.164 format: +1234567890
-  friendlyName  String?
-  twilioSid     String?   @unique
-  userId        String
-  assistantId   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  number      String
+  provider    String   @default("vobiz")
+  sipTrunkId  String?  @map("sip_trunk_id")
+  agentId     String?  @map("agent_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  assistant   Assistant?  @relation(fields: [assistantId], references: [id])
-  calls       Call[]
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  agent     Agent?     @relation(fields: [agentId], references: [id])
+  calls     Call[]
+  campaigns Campaign[]
+
+  @@map("phone_numbers")
 }
 
 model Call {
-  id              String    @id @default(cuid())
-  userId          String
-  assistantId     String
-  phoneNumberId   String?
+  id               String    @id @default(uuid())
+  workspaceId      String?   @map("workspace_id")
+  agentId          String?   @map("agent_id")
+  campaignId       String?   @map("campaign_id")
+  phoneNumber      String    @map("phone_number")
+  fromNumber       String?   @map("from_number")
+  direction        String    @default("outbound")
+  type             String    @default("manual")
+  status           String    @default("in-progress")
+  outcome          String?
+  durationSeconds  Int       @default(0) @map("duration_seconds")
+  costRupees       Decimal   @default(0) @map("cost_rupees")
+  recordingUrl     String?   @map("recording_url")
+  transcript       String    @default("")
+  sentiment        String?
+  conversationTurns Int      @default(0) @map("conversation_turns")
+  bookingConfirmed Boolean   @default(false) @map("booking_confirmed")
+  extractedData    Json?     @map("extracted_data")
+  vobizCallUuid    String?   @unique @map("vobiz_call_uuid")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  endedAt          DateTime? @map("ended_at")
 
-  // Call metadata
-  type            CallType  @default(INBOUND)
-  status          CallStatus @default(QUEUED)
-  toNumber        String?
-  fromNumber      String?
-  twilioCallSid   String?   @unique
-  twilioRoomSid   String?
+  workspace   Workspace?   @relation(fields: [workspaceId], references: [id])
+  agent       Agent?       @relation(fields: [agentId], references: [id])
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id])
+  messages    CallMessage[]
+  billingTxns BillingTransaction[]
 
-  // Timing
-  startedAt       DateTime?
-  endedAt         DateTime?
-  duration        Int?      // seconds
-
-  // Cost tracking
-  cost            Float?
-
-  // Recordings
-  recordingUrl    String?
-  recordingSid    String?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  assistant       Assistant   @relation(fields: [assistantId], references: [id])
-  phoneNumber     PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
-  messages        CallMessage[]
-
-  @@index([userId])
-  @@index([assistantId])
+  @@index([workspaceId])
+  @@index([agentId])
   @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("calls")
 }
 
 model CallMessage {
-  id        String      @id @default(cuid())
-  callId    String
-  role      MessageRole
-  content   String      @db.Text
-  timestamp DateTime    @default(now())
+  id        String   @id @default(uuid())
+  callId    String   @map("call_id")
+  role      String   // user | assistant | system
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
 
-  call      Call        @relation(fields: [callId], references: [id], onDelete: Cascade)
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
 
   @@index([callId])
+  @@map("call_messages")
 }
 
-enum CallType {
-  INBOUND
-  OUTBOUND
-  WEB
+model Campaign {
+  id            String   @id @default(uuid())
+  workspaceId   String?  @map("workspace_id")
+  agentId       String?  @map("agent_id")
+  phoneNumberId String?  @map("phone_number_id")
+  contactListId String?  @map("contact_list_id")
+  name          String
+  description   String   @default("")
+  status        String   @default("draft")  // draft|running|paused|completed
+  totalContacts Int      @default(0) @map("total_contacts")
+  calledCount   Int      @default(0) @map("called_count")
+  successCount  Int      @default(0) @map("success_count")
+  failedCount   Int      @default(0) @map("failed_count")
+  maxConcurrent Int      @default(4) @map("max_concurrent")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  workspace   Workspace?   @relation(fields: [workspaceId], references: [id])
+  agent       Agent?       @relation(fields: [agentId], references: [id])
+  phoneNumber PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
+  contactList ContactList? @relation(fields: [contactListId], references: [id])
+  calls       Call[]
+
+  @@map("campaigns")
 }
 
-enum CallStatus {
-  QUEUED
-  RINGING
-  IN_PROGRESS
-  COMPLETED
-  FAILED
-  BUSY
-  NO_ANSWER
-  CANCELED
+model ContactList {
+  id           String   @id @default(uuid())
+  workspaceId  String?  @map("workspace_id")
+  name         String
+  contactCount Int      @default(0) @map("contact_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  contacts  Contact[]
+  campaigns Campaign[]
+
+  @@map("contact_lists")
 }
 
-enum MessageRole {
-  SYSTEM
-  USER
-  ASSISTANT
-  TOOL
+model Contact {
+  id           String   @id @default(uuid())
+  workspaceId  String?  @map("workspace_id")
+  listId       String?  @map("list_id")
+  phoneNumber  String   @map("phone_number")
+  name         String   @default("")
+  email        String   @default("")
+  customFields Json     @default("{}") @map("custom_fields")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workspace Workspace?   @relation(fields: [workspaceId], references: [id])
+  list      ContactList? @relation(fields: [listId], references: [id])
+
+  @@index([workspaceId])
+  @@index([listId])
+  @@map("contacts")
+}
+
+model KnowledgeBase {
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  name        String
+  description String   @default("")
+  chunkCount  Int      @default(0) @map("chunk_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace?         @relation(fields: [workspaceId], references: [id])
+  documents KbDocument[]
+  agents    AgentKnowledgeBase[]
+
+  @@map("knowledge_bases")
+}
+
+model KbDocument {
+  id        String   @id @default(uuid())
+  kbId      String?  @map("kb_id")
+  filename  String?
+  content   String?
+  status    String   @default("processing")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  kb     KnowledgeBase? @relation(fields: [kbId], references: [id])
+  chunks KbChunk[]
+
+  @@map("kb_documents")
+}
+
+model KbChunk {
+  id         String   @id @default(uuid())
+  kbId       String?  @map("kb_id")
+  documentId String?  @map("document_id")
+  content    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document KbDocument? @relation(fields: [documentId], references: [id])
+
+  @@map("kb_chunks")
+}
+
+model AgentKnowledgeBase {
+  agentId String @map("agent_id")
+  kbId    String @map("kb_id")
+
+  agent Agent         @relation(fields: [agentId], references: [id])
+  kb    KnowledgeBase @relation(fields: [kbId], references: [id])
+
+  @@id([agentId, kbId])
+  @@map("agent_knowledge_bases")
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(uuid())
+  workspaceId String   @map("workspace_id")
+  url         String
+  secret      String
+  events      String[] @default(["call.started", "call.ended", "call.failed"])
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id                 String    @id @default(uuid())
+  webhookEndpointId  String    @map("webhook_endpoint_id")
+  callId             String?   @map("call_id")
+  event              String
+  payload            Json
+  status             String    @default("pending")
+  statusCode         Int?      @map("status_code")
+  attempts           Int       @default(0)
+  lastAttemptAt      DateTime? @map("last_attempt_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  endpoint WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
+model BillingTransaction {
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  amount      Decimal
+  type        String?
+  description String   @default("")
+  callId      String?  @map("call_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  call      Call?      @relation(fields: [callId], references: [id])
+
+  @@map("billing_transactions")
 }
