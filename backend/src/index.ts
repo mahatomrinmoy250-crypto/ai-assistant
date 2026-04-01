@@ -8,12 +8,15 @@ import { config } from './config';
 import { errorHandler } from './middleware/errorHandler';
 import { setupCallWebSocket } from './websocket/call-ws';
 import { startWebhookWorker } from './lib/queue';
+import { startCampaignWorker } from './lib/campaignWorker';
 import { getActiveSessionCount } from './services/call-session';
 import authRoutes from './routes/auth';
 import assistantsRoutes from './routes/assistants';
 import callsRoutes from './routes/calls';
 import phoneNumbersRoutes from './routes/phoneNumbers';
 import knowledgeBasesRoutes from './routes/knowledgeBases';
+import campaignsRoutes from './routes/campaigns';
+import contactListsRoutes from './routes/contactLists';
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,6 +64,8 @@ app.use('/api/assistants', assistantsRoutes);
 app.use('/api/calls', callsRoutes);
 app.use('/api/phone-numbers', phoneNumbersRoutes);
 app.use('/api/knowledge-bases', knowledgeBasesRoutes);
+app.use('/api/campaigns', campaignsRoutes);
+app.use('/api/contact-lists', contactListsRoutes);
 
 // 404
 app.use((_req, res) => {
@@ -70,13 +75,15 @@ app.use((_req, res) => {
 // Error handler
 app.use(errorHandler);
 
-// Start BullMQ webhook worker
+// Start BullMQ workers
 const webhookWorker = startWebhookWorker();
+const campaignWorker = startCampaignWorker();
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('[Server] SIGTERM received, shutting down gracefully...');
   await webhookWorker.close();
+  await campaignWorker.close();
   httpServer.close(() => process.exit(0));
 });
 
