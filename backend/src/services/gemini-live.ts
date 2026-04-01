@@ -1,4 +1,4 @@
-import { GoogleGenAI, Modality, Session, LiveConnectConfig } from '@google/genai';
+import { GoogleGenAI, Modality, Session, LiveConnectConfig, Tool } from '@google/genai';
 import { config } from '../config';
 
 /**
@@ -9,6 +9,10 @@ import { config } from '../config';
  * Audio flow:
  *   Vobiz mulaw 8kHz → [transcoder] → PCM 16kHz → Gemini Live
  *   Gemini Live PCM 24kHz → [transcoder] → mulaw 8kHz → Vobiz
+ *
+ * Tool calling flow:
+ *   Gemini issues toolCall → onToolCall callback → caller executes tool
+ *   → sendToolResponse() → Gemini resumes with result
  */
 
 export const GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
@@ -19,34 +23,65 @@ export const GEMINI_VOICES = [
   'Leda', 'Orus', 'Zephyr', 'Achernar', 'Schedar',
 ];
 
+export interface ToolCallRequest {
+  callId: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
 export interface GeminiLiveConfig {
   systemPrompt: string;
   voiceName?: string;
   languageCode?: string;
+  hasKnowledgeBase?: boolean;
   onAudio: (pcm24kBuffer: Buffer) => void;
   onTranscript: (text: string, role: 'user' | 'model') => void;
+  onToolCall: (call: ToolCallRequest) => Promise<string>;
   onError: (err: Error) => void;
   onClose: () => void;
 }
 
+// ─── Tool declarations ────────────────────────────────────────────────────────
+
+const KB_SEARCH_TOOL: Tool = {
+  functionDeclarations: [
+    {
+      name: 'search_knowledge_base',
+      description:
+        'Search the agent knowledge base for relevant information to answer the user. ' +
+        'Use this when the user asks a question that may be answered from product, policy, or FAQ content.',
+      parameters: {
+        type: 'object' as any,
+        properties: {
+          query: {
+            type: 'string' as any,
+            description: 'The search query — what you want to look up',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  ],
+};
+
+// ─── Session class ────────────────────────────────────────────────────────────
+
 export class GeminiLiveSession {
   private ai: GoogleGenAI;
   private session: Session | null = null;
-  private onAudio: (pcm24kBuffer: Buffer) => void;
-  private onTranscript: (text: string, role: 'user' | 'model') => void;
-  private onError: (err: Error) => void;
-  private onClose: () => void;
+  private cfg: GeminiLiveConfig | null = null;
   private isClosed = false;
 
   constructor(cfg: GeminiLiveConfig) {
     this.ai = new GoogleGenAI({ apiKey: config.gemini.apiKey });
-    this.onAudio = cfg.onAudio;
-    this.onTranscript = cfg.onTranscript;
-    this.onError = cfg.onError;
-    this.onClose = cfg.onClose;
+    this.cfg = cfg;
   }
 
   async connect(cfg: GeminiLiveConfig): Promise<void> {
+    this.cfg = cfg;
+
+    const tools: Tool[] = cfg.hasKnowledgeBase ? [KB_SEARCH_TOOL] : [];
+
     const liveConfig: LiveConnectConfig = {
       responseModalities: [Modality.AUDIO],
       systemInstruction: {
@@ -67,6 +102,8 @@ export class GeminiLiveSession {
       thinkingConfig: {
         thinkingBudget: 0,
       },
+      // Tool declarations (only when KB is available)
+      ...(tools.length > 0 ? { tools } : {}),
     };
 
     this.session = await this.ai.live.connect({
@@ -78,48 +115,69 @@ export class GeminiLiveSession {
         },
 
         onmessage: (message) => {
-          if (this.isClosed) return;
+          if (this.isClosed || !this.cfg) return;
 
           // Audio response chunks
           if (message.serverContent?.modelTurn?.parts) {
             for (const part of message.serverContent.modelTurn.parts) {
               if (part.inlineData?.mimeType?.startsWith('audio/pcm')) {
                 const audioData = Buffer.from(part.inlineData.data || '', 'base64');
-                this.onAudio(audioData);
+                this.cfg.onAudio(audioData);
               }
             }
           }
 
           // Input (user) transcript
           if (message.serverContent?.inputTranscription?.text) {
-            this.onTranscript(message.serverContent.inputTranscription.text, 'user');
+            this.cfg.onTranscript(message.serverContent.inputTranscription.text, 'user');
           }
 
           // Output (model) transcript
           if (message.serverContent?.outputTranscription?.text) {
-            this.onTranscript(message.serverContent.outputTranscription.text, 'model');
+            this.cfg.onTranscript(message.serverContent.outputTranscription.text, 'model');
           }
 
           // Turn complete
           if (message.serverContent?.turnComplete) {
             console.log('[GeminiLive] Model turn complete');
           }
+
+          // Tool call request from Gemini
+          if (message.toolCall?.functionCalls?.length) {
+            for (const fc of message.toolCall.functionCalls) {
+              const callRequest: ToolCallRequest = {
+                callId: fc.id ?? '',
+                name: fc.name ?? '',
+                args: (fc.args as Record<string, unknown>) ?? {},
+              };
+
+              console.log(`[GeminiLive] Tool call: ${callRequest.name}`, callRequest.args);
+
+              // Execute async and send response back
+              this.cfg.onToolCall(callRequest)
+                .then((result) => this.sendToolResponse(callRequest.callId, callRequest.name, result))
+                .catch((err) => {
+                  console.error('[GeminiLive] Tool call failed:', err);
+                  this.sendToolResponse(callRequest.callId, callRequest.name, 'Error: could not retrieve information');
+                });
+            }
+          }
         },
 
         onerror: (e) => {
           console.error('[GeminiLive] Error:', e);
-          this.onError(e instanceof Error ? e : new Error(String(e)));
+          this.cfg?.onError(e instanceof Error ? e : new Error(String(e)));
         },
 
         onclose: (e) => {
           console.log('[GeminiLive] Session closed:', e?.reason);
           this.isClosed = true;
-          this.onClose();
+          this.cfg?.onClose();
         },
       },
     });
 
-    console.log(`[GeminiLive] Connected — model: ${GEMINI_LIVE_MODEL}`);
+    console.log(`[GeminiLive] Connected — model: ${GEMINI_LIVE_MODEL}, tools: ${tools.length}`);
   }
 
   /**
@@ -145,6 +203,23 @@ export class GeminiLiveSession {
     this.session.sendClientContent({
       turns: [{ role: 'user', parts: [{ text }] }],
       turnComplete: true,
+    });
+  }
+
+  /**
+   * Send tool result back to Gemini so it can continue the conversation
+   */
+  sendToolResponse(callId: string, name: string, result: string): void {
+    if (this.isClosed || !this.session) return;
+
+    this.session.sendToolResponse({
+      functionResponses: [
+        {
+          id: callId,
+          name,
+          response: { output: result },
+        },
+      ],
     });
   }
 

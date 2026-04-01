@@ -6,9 +6,10 @@ import {
   incrementActiveCalls,
   decrementActiveCalls,
 } from '../lib/redis';
-import { GeminiLiveSession } from './gemini-live';
+import { GeminiLiveSession, ToolCallRequest } from './gemini-live';
 import { vobizAudioToGemini, geminiAudioToVobiz } from './audio-transcoder';
 import { dispatchWebhookEvent } from './webhook';
+import { getAgentKbIds, searchKnowledgeBase } from './knowledge-base';
 import { config } from '../config';
 
 interface CallSessionData {
@@ -49,18 +50,22 @@ export class CallSession {
   private audioQueue: Buffer[] = [];
   private isSending = false;
   private maxDurationTimer: NodeJS.Timeout | null = null;
+  private kbIds: string[] = [];
 
   constructor({ data, ws, streamSid }: CallSessionOptions) {
     this.data = data;
     this.ws = ws;
     this.streamSid = streamSid || null;
 
+    // GeminiLiveSession is initialized in start() once KB IDs are loaded
     this.gemini = new GeminiLiveSession({
       systemPrompt: data.systemPrompt,
       voiceName: data.ttsVoice,
       languageCode: data.language,
+      hasKnowledgeBase: false,
       onAudio: this.handleGeminiAudio.bind(this),
       onTranscript: this.handleTranscript.bind(this),
+      onToolCall: this.handleToolCall.bind(this),
       onError: (e) => console.error(`[CallSession ${data.callId}] Gemini error:`, e),
       onClose: () => this.end('completed').catch(console.error),
     });
@@ -68,12 +73,22 @@ export class CallSession {
 
   async start(): Promise<void> {
     try {
+      // Load agent's knowledge base IDs
+      this.kbIds = await getAgentKbIds(this.data.agentId);
+      const hasKnowledgeBase = this.kbIds.length > 0;
+
+      if (hasKnowledgeBase) {
+        console.log(`[CallSession ${this.data.callId}] KB attached: ${this.kbIds.join(', ')}`);
+      }
+
       await this.gemini.connect({
         systemPrompt: this.data.systemPrompt,
         voiceName: this.data.ttsVoice,
         languageCode: this.data.language,
+        hasKnowledgeBase,
         onAudio: this.handleGeminiAudio.bind(this),
         onTranscript: this.handleTranscript.bind(this),
+        onToolCall: this.handleToolCall.bind(this),
         onError: (e) => console.error(`[CallSession ${this.data.callId}]`, e),
         onClose: () => this.end('completed').catch(console.error),
       });
@@ -117,6 +132,23 @@ export class CallSession {
       console.error(`[CallSession ${this.data.callId}] Start failed:`, err);
       await this.end('failed');
     }
+  }
+
+  private async handleToolCall(call: ToolCallRequest): Promise<string> {
+    console.log(`[CallSession ${this.data.callId}] Tool: ${call.name}`, call.args);
+
+    if (call.name === 'search_knowledge_base') {
+      const query = String(call.args.query ?? '');
+      if (!query) return 'No query provided.';
+
+      const result = await searchKnowledgeBase(this.kbIds, query);
+      if (!result) return 'No relevant information found in the knowledge base.';
+
+      console.log(`[CallSession ${this.data.callId}] KB result (${result.length} chars)`);
+      return result;
+    }
+
+    return `Unknown tool: ${call.name}`;
   }
 
   processAudioChunk(mulawBase64: string): void {

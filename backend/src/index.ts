@@ -13,6 +13,7 @@ import authRoutes from './routes/auth';
 import assistantsRoutes from './routes/assistants';
 import callsRoutes from './routes/calls';
 import phoneNumbersRoutes from './routes/phoneNumbers';
+import knowledgeBasesRoutes from './routes/knowledgeBases';
 
 const app = express();
 const httpServer = createServer(app);
@@ -59,6 +60,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/assistants', assistantsRoutes);
 app.use('/api/calls', callsRoutes);
 app.use('/api/phone-numbers', phoneNumbersRoutes);
+app.use('/api/knowledge-bases', knowledgeBasesRoutes);
 
 // 404
 app.use((_req, res) => {

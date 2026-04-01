@@ -227,14 +227,16 @@ model KbDocument {
 }
 
 model KbChunk {
-  id         String   @id @default(uuid())
-  kbId       String?  @map("kb_id")
-  documentId String?  @map("document_id")
+  id         String  @id @default(uuid())
+  kbId       String? @map("kb_id")
+  documentId String? @map("document_id")
   content    String?
+  embedding  Float[] // text-embedding-004 vector (768 dims)
   createdAt  DateTime @default(now()) @map("created_at")
 
   document KbDocument? @relation(fields: [documentId], references: [id])
 
+  @@index([kbId])
   @@map("kb_chunks")
 }
 
