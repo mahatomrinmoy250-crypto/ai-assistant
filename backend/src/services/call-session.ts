@@ -25,6 +25,7 @@ interface CallSessionData {
   maxDurationMinutes: number;
   silenceTimeoutSeconds: number;
   vobizCallUuid: string | null;
+  enableBooking: boolean;   // agent has booking tool enabled
 }
 
 interface CallSessionOptions {
@@ -86,6 +87,7 @@ export class CallSession {
         voiceName: this.data.ttsVoice,
         languageCode: this.data.language,
         hasKnowledgeBase,
+        enableBooking: this.data.enableBooking,
         onAudio: this.handleGeminiAudio.bind(this),
         onTranscript: this.handleTranscript.bind(this),
         onToolCall: this.handleToolCall.bind(this),
@@ -140,15 +142,75 @@ export class CallSession {
     if (call.name === 'search_knowledge_base') {
       const query = String(call.args.query ?? '');
       if (!query) return 'No query provided.';
-
       const result = await searchKnowledgeBase(this.kbIds, query);
-      if (!result) return 'No relevant information found in the knowledge base.';
+      return result || 'No relevant information found in the knowledge base.';
+    }
 
-      console.log(`[CallSession ${this.data.callId}] KB result (${result.length} chars)`);
-      return result;
+    if (call.name === 'book_appointment') {
+      return this.handleBookAppointment(call.args);
     }
 
     return `Unknown tool: ${call.name}`;
+  }
+
+  private async handleBookAppointment(args: Record<string, unknown>): Promise<string> {
+    const patientName   = String(args.patient_name   ?? '').trim();
+    const patientPhone  = String(args.patient_phone  ?? '').trim();
+    const appointmentDate = String(args.appointment_date ?? '').trim();
+    const appointmentTime = String(args.appointment_time ?? '').trim();
+    const notes         = String(args.notes          ?? '').trim();
+
+    if (!patientName || !appointmentDate || !appointmentTime) {
+      return 'Booking failed: name, date, and time are required.';
+    }
+
+    try {
+      // Save booking to DB
+      const booking = await prisma.booking.create({
+        data: {
+          workspaceId:     this.data.workspaceId,
+          agentId:         this.data.agentId,
+          callId:          this.data.callId,
+          patientName,
+          patientPhone,
+          appointmentDate,
+          appointmentTime,
+          notes,
+          status:          'confirmed',
+        },
+      });
+
+      // Mark call as booking confirmed
+      await prisma.call.update({
+        where: { id: this.data.callId },
+        data: {
+          bookingConfirmed: true,
+          extractedData: {
+            patientName, patientPhone, appointmentDate, appointmentTime, notes,
+            bookingId: booking.id,
+          },
+        },
+      });
+
+      // Fire webhook so doctor's CRM / Google Sheets / n8n can pick it up
+      await dispatchWebhookEvent(this.data.workspaceId, 'booking.created', {
+        bookingId:       booking.id,
+        callId:          this.data.callId,
+        agentId:         this.data.agentId,
+        patientName,
+        patientPhone,
+        appointmentDate,
+        appointmentTime,
+        notes,
+      });
+
+      console.log(`[CallSession ${this.data.callId}] Booking saved: ${booking.id} — ${patientName} on ${appointmentDate} at ${appointmentTime}`);
+
+      return `Appointment confirmed for ${patientName} on ${appointmentDate} at ${appointmentTime}. Booking ID: ${booking.id}`;
+    } catch (err) {
+      console.error(`[CallSession ${this.data.callId}] Booking save failed:`, err);
+      return 'Booking could not be saved due to a system error. Please try again.';
+    }
   }
 
   processAudioChunk(mulawBase64: string): void {

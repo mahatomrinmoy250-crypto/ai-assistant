@@ -95,6 +95,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
                 maxDurationMinutes: agent.maxDurationMinutes,
                 silenceTimeoutSeconds: agent.silenceTimeoutSeconds,
                 vobizCallUuid: call.vobizCallUuid ?? null,
+                enableBooking: agent.enableBooking,
               },
               ws,
               streamSid: streamSid,

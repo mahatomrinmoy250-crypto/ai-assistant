@@ -29,6 +29,7 @@ model Workspace {
   apiKeys          ApiKey[]
   webhookEndpoints WebhookEndpoint[]
   billingTxns      BillingTransaction[]
+  bookings         Booking[]
 
   @@map("workspaces")
 }
@@ -60,6 +61,7 @@ model Agent {
   maxDurationMinutes    Int      @default(10) @map("max_duration_minutes")
   silenceTimeoutSeconds Int      @default(30) @map("silence_timeout_seconds")
   transferNumber        String?  @map("transfer_number")
+  enableBooking         Boolean  @default(false) @map("enable_booking")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
@@ -68,6 +70,7 @@ model Agent {
   calls            Call[]
   campaigns        Campaign[]
   knowledgeBases   AgentKnowledgeBase[]
+  bookings         Booking[]
 
   @@map("agents")
 }
@@ -118,6 +121,7 @@ model Call {
   campaign    Campaign?    @relation(fields: [campaignId], references: [id])
   messages    CallMessage[]
   billingTxns BillingTransaction[]
+  booking     Booking?
 
   @@index([workspaceId])
   @@index([agentId])
@@ -256,7 +260,7 @@ model WebhookEndpoint {
   workspaceId String   @map("workspace_id")
   url         String
   secret      String
-  events      String[] @default(["call.started", "call.ended", "call.failed"])
+  events      String[] @default(["call.started", "call.ended", "call.failed", "booking.created"])
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
 
@@ -282,6 +286,30 @@ model WebhookDelivery {
 
   @@index([status])
   @@map("webhook_deliveries")
+}
+
+// ─── Bookings (created by AI agent during calls) ─────────────────────────────
+model Booking {
+  id            String    @id @default(uuid())
+  workspaceId   String    @map("workspace_id")
+  agentId       String?   @map("agent_id")
+  callId        String?   @unique @map("call_id")
+  patientName   String    @default("") @map("patient_name")
+  patientPhone  String    @default("") @map("patient_phone")
+  appointmentDate String  @default("") @map("appointment_date") // e.g. "2026-04-05"
+  appointmentTime String  @default("") @map("appointment_time") // e.g. "3:00 PM"
+  notes         String    @default("")
+  status        String    @default("confirmed") // confirmed | cancelled | rescheduled
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent     Agent?    @relation(fields: [agentId], references: [id])
+  call      Call?     @relation(fields: [callId], references: [id])
+
+  @@index([workspaceId])
+  @@index([appointmentDate])
+  @@map("bookings")
 }
 
 model BillingTransaction {

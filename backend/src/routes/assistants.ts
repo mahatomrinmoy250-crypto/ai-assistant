@@ -17,6 +17,7 @@ const AgentSchema = z.object({
   maxDurationMinutes: z.number().min(1).max(60).optional(),
   silenceTimeoutSeconds: z.number().min(5).max(120).optional(),
   transferNumber: z.string().optional(),
+  enableBooking: z.boolean().optional(),
 });
 
 // GET /api/assistants  (agents)

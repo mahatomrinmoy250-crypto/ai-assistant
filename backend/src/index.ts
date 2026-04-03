@@ -17,6 +17,7 @@ import phoneNumbersRoutes from './routes/phoneNumbers';
 import knowledgeBasesRoutes from './routes/knowledgeBases';
 import campaignsRoutes from './routes/campaigns';
 import contactListsRoutes from './routes/contactLists';
+import bookingsRoutes from './routes/bookings';
 
 const app = express();
 const httpServer = createServer(app);
@@ -66,6 +67,7 @@ app.use('/api/phone-numbers', phoneNumbersRoutes);
 app.use('/api/knowledge-bases', knowledgeBasesRoutes);
 app.use('/api/campaigns', campaignsRoutes);
 app.use('/api/contact-lists', contactListsRoutes);
+app.use('/api/bookings', bookingsRoutes);
 
 // 404
 app.use((_req, res) => {

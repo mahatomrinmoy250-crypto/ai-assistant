@@ -34,6 +34,7 @@ export interface GeminiLiveConfig {
   voiceName?: string;
   languageCode?: string;
   hasKnowledgeBase?: boolean;
+  enableBooking?: boolean;        // turn on book_appointment tool
   onAudio: (pcm24kBuffer: Buffer) => void;
   onTranscript: (text: string, role: 'user' | 'model') => void;
   onToolCall: (call: ToolCallRequest) => Promise<string>;
@@ -64,6 +65,43 @@ const KB_SEARCH_TOOL: Tool = {
   ],
 };
 
+const BOOKING_TOOL: Tool = {
+  functionDeclarations: [
+    {
+      name: 'book_appointment',
+      description:
+        'Book an appointment for the patient. Call this ONLY when the patient has clearly confirmed ' +
+        'their name, preferred date, and preferred time. Confirm all details with the patient before calling.',
+      parameters: {
+        type: 'object' as any,
+        properties: {
+          patient_name: {
+            type: 'string' as any,
+            description: "Patient's full name as they said it",
+          },
+          patient_phone: {
+            type: 'string' as any,
+            description: "Patient's phone number if they provided it, else empty string",
+          },
+          appointment_date: {
+            type: 'string' as any,
+            description: 'Appointment date in YYYY-MM-DD format, e.g. 2026-04-05',
+          },
+          appointment_time: {
+            type: 'string' as any,
+            description: 'Appointment time as spoken, e.g. "3:00 PM" or "subah 10 baje"',
+          },
+          notes: {
+            type: 'string' as any,
+            description: 'Any additional notes the patient mentioned (symptoms, reason for visit, etc.)',
+          },
+        },
+        required: ['patient_name', 'appointment_date', 'appointment_time'],
+      },
+    },
+  ],
+};
+
 // ─── Session class ────────────────────────────────────────────────────────────
 
 export class GeminiLiveSession {
@@ -80,7 +118,9 @@ export class GeminiLiveSession {
   async connect(cfg: GeminiLiveConfig): Promise<void> {
     this.cfg = cfg;
 
-    const tools: Tool[] = cfg.hasKnowledgeBase ? [KB_SEARCH_TOOL] : [];
+    const tools: Tool[] = [];
+    if (cfg.hasKnowledgeBase) tools.push(KB_SEARCH_TOOL);
+    if (cfg.enableBooking)    tools.push(BOOKING_TOOL);
 
     const liveConfig: LiveConnectConfig = {
       responseModalities: [Modality.AUDIO],
