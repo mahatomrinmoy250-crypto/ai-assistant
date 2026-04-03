@@ -18,6 +18,7 @@ import knowledgeBasesRoutes from './routes/knowledgeBases';
 import campaignsRoutes from './routes/campaigns';
 import contactListsRoutes from './routes/contactLists';
 import bookingsRoutes from './routes/bookings';
+import webhooksRoutes from './routes/webhooks';
 
 const app = express();
 const httpServer = createServer(app);
@@ -68,6 +69,7 @@ app.use('/api/knowledge-bases', knowledgeBasesRoutes);
 app.use('/api/campaigns', campaignsRoutes);
 app.use('/api/contact-lists', contactListsRoutes);
 app.use('/api/bookings', bookingsRoutes);
+app.use('/api/webhooks', webhooksRoutes);
 
 // 404
 app.use((_req, res) => {

@@ -1,0 +1,135 @@
+{
+  "name": "VoiceAI → Google Sheets Booking",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voiceai-booking",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook — Booking Created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "voiceai-booking"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-event",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "booking.created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-event",
+      "name": "Is booking.created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Booking ID":        "={{ $json.body.bookingId }}",
+            "Patient Name":      "={{ $json.body.patientName }}",
+            "Patient Phone":     "={{ $json.body.patientPhone }}",
+            "Appointment Date":  "={{ $json.body.appointmentDate }}",
+            "Appointment Time":  "={{ $json.body.appointmentTime }}",
+            "Notes":             "={{ $json.body.notes }}",
+            "Status":            "=Confirmed",
+            "Booked At":         "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "google-sheets-append",
+      "name": "Google Sheets — Add Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [720, 220],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\" }"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"skipped\" }"
+      },
+      "id": "respond-skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 400]
+    }
+  ],
+  "connections": {
+    "Webhook — Booking Created": {
+      "main": [[{ "node": "Is booking.created?", "type": "main", "index": 0 }]]
+    },
+    "Is booking.created?": {
+      "main": [
+        [{ "node": "Google Sheets — Add Row", "type": "main", "index": 0 }],
+        [{ "node": "Respond Skip",            "type": "main", "index": 0 }]
+      ]
+    },
+    "Google Sheets — Add Row": {
+      "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["voiceai", "booking", "google-sheets"],
+  "triggerCount": 1,
+  "updatedAt": "2026-04-03T00:00:00.000Z",
+  "versionId": "1"
+}
