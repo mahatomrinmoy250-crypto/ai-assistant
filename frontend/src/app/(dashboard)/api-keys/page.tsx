@@ -108,7 +108,7 @@ export default function ApiKeysPage() {
                 <tr key={key.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900">{key.name}</td>
                   <td className="px-4 py-3 font-mono text-gray-500">
-                    {key.key.slice(0, 12)}••••••••
+                    {(key.key || key.keyPrefix || '').slice(0, 12)}••••••••
                   </td>
                   <td className="px-4 py-3 text-gray-500">
                     {key.lastUsed ? new Date(key.lastUsed).toLocaleDateString() : 'Never'}

@@ -72,7 +72,7 @@ export default function AssistantsPage() {
               </p>
               <div className="mt-auto pt-4 border-t border-gray-100 flex gap-3 text-xs text-gray-400">
                 <span className="badge-blue">{assistant.llmModel}</span>
-                <span className="badge-gray">{assistant.ttsVoiceId.slice(0, 8)}...</span>
+                <span className="badge-gray">{( assistant.ttsVoiceId || assistant.ttsVoice || "").slice(0, 8)}...</span>
               </div>
             </div>
           ))}

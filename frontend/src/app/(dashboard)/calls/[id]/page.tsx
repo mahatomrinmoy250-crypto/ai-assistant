@@ -82,7 +82,7 @@ export default function CallDetailPage() {
                   >
                     <div className="text-xs opacity-70 mb-1">
                       {msg.role === 'USER' ? 'Caller' : 'Assistant'} ·{' '}
-                      {new Date(msg.timestamp).toLocaleTimeString()}
+                      {new Date(msg.timestamp || msg.createdAt).toLocaleTimeString()}
                     </div>
                     {msg.content}
                   </div>

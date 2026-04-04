@@ -169,7 +169,6 @@ export default function AssistantForm({
       {/* Advanced voice settings (kept for DB compat) */}
       <section className="card p-6 space-y-4">
         <h2 className="font-semibold text-gray-900">Advanced Voice Settings</h2>
-        <div>
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="label">Stability ({form.ttsStability})</label>
