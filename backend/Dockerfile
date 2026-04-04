@@ -1,37 +1,42 @@
-# ── Build stage ───────────────────────────────────────────────────────────────
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install dependencies (dev + prod) for compilation
 COPY package*.json ./
 RUN npm ci
 
+# Generate Prisma client before compiling TypeScript
 COPY prisma ./prisma
-RUN npm run db:generate
+RUN npx prisma generate
 
-COPY . .
+# Copy source and compile
+COPY tsconfig.json ./
+COPY src ./src
 RUN npm run build
 
-# ── Production stage ──────────────────────────────────────────────────────────
+# ── Stage 2: runner ───────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Install wget for healthcheck
+# wget is used by the Docker health check
 RUN apk add --no-cache wget
 
-# Copy only production dependencies
+# Install production dependencies only
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy built artifacts + prisma client
+# Copy compiled output and Prisma artefacts from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# Prisma schema is required at runtime for migrate deploy
 COPY prisma ./prisma
 
 RUN mkdir -p logs
 
-# PORT is set per-instance via environment variable (3001, 3002, ...)
 EXPOSE 3001
 
 CMD ["node", "dist/index.js"]

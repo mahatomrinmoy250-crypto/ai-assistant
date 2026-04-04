@@ -1,45 +1,72 @@
-version: '3.8'
+version: '3.9'
+
+networks:
+  voice_net:
+    driver: bridge
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: voice_ai_platform
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+
+  # ── Redis (session/queue store — no persistence needed) ───────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - '6379'
+    networks:
+      - voice_net
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres']
-      interval: 5s
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
+  # ── Backend (Node.js / Express / TypeScript) ──────────────────────────────
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - '3001:3001'
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/voice_ai_platform
-      NODE_ENV: development
     env_file:
-      - ./backend/.env
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      redis:
         condition: service_healthy
-    volumes:
-      - ./backend/src:/app/src
+    networks:
+      - voice_net
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
+  # ── Frontend (Next.js standalone) ─────────────────────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:3001}
+    restart: unless-stopped
     ports:
       - '3000:3000'
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NODE_ENV: production
     depends_on:
-      - backend
-
-volumes:
-  postgres_data:
+      backend:
+        condition: service_healthy
+    networks:
+      - voice_net
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
