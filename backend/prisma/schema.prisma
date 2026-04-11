@@ -98,6 +98,7 @@ model Call {
   workspaceId      String?   @map("workspace_id")
   agentId          String?   @map("agent_id")
   campaignId       String?   @map("campaign_id")
+  phoneNumberId    String?   @map("phone_number_id")
   phoneNumber      String    @map("phone_number")
   fromNumber       String?   @map("from_number")
   direction        String    @default("outbound")
@@ -119,6 +120,7 @@ model Call {
   workspace   Workspace?   @relation(fields: [workspaceId], references: [id])
   agent       Agent?       @relation(fields: [agentId], references: [id])
   campaign    Campaign?    @relation(fields: [campaignId], references: [id])
+  phoneNumberRef PhoneNumber? @relation(fields: [phoneNumberId], references: [id])
   messages    CallMessage[]
   billingTxns BillingTransaction[]
   booking     Booking?
