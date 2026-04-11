@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# OpenSSL is required by Prisma's query engine (libquery_engine-linux-musl.so.node)
+RUN apk add --no-cache openssl
+
 # Install dependencies (dev + prod) for compilation
 COPY package*.json ./
 RUN npm ci
@@ -21,8 +24,8 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# wget is used by the Docker health check
-RUN apk add --no-cache wget
+# wget = Docker health check, openssl = Prisma query engine runtime dependency
+RUN apk add --no-cache wget openssl
 
 # Install production dependencies only
 COPY package*.json ./
