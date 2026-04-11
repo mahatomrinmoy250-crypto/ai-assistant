@@ -1,12 +1,31 @@
-version: '3.9'
-
 networks:
   voice_net:
     driver: bridge
 
 services:
 
-  # ── Redis (session/queue store — no persistence needed) ───────────────────
+  # ── PostgreSQL (local database — bypasses Supabase pooler issues) ─────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    expose:
+      - '5432'
+    environment:
+      POSTGRES_DB: voiceai
+      POSTGRES_USER: voiceai
+      POSTGRES_PASSWORD: voiceai_local_2026
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - voice_net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U voiceai -d voiceai']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis (session/queue store) ───────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -35,8 +54,11 @@ services:
       NODE_ENV: production
       PORT: 3001
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://voiceai:voiceai_local_2026@postgres:5432/voiceai
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - voice_net
@@ -70,3 +92,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+volumes:
+  pgdata:
