@@ -143,7 +143,7 @@ router.post('/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: 
 router.delete('/api-keys/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const apiKey = await prisma.apiKey.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
 
     if (!apiKey) {
@@ -151,7 +151,7 @@ router.delete('/api-keys/:id', authMiddleware, async (req: AuthenticatedRequest,
       return;
     }
 
-    await prisma.apiKey.delete({ where: { id: req.params.id } });
+    await prisma.apiKey.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to delete API key' });

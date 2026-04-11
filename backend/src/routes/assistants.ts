@@ -37,7 +37,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const agent = await prisma.agent.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
 
     if (!agent) {
@@ -71,7 +71,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
 router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.agent.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Agent not found' });
@@ -79,7 +79,7 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const data = AgentSchema.partial().parse(req.body);
-    const agent = await prisma.agent.update({ where: { id: req.params.id }, data });
+    const agent = await prisma.agent.update({ where: { id: req.params.id as string }, data });
     res.json(agent);
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -94,13 +94,13 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.agent.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Agent not found' });
       return;
     }
-    await prisma.agent.delete({ where: { id: req.params.id } });
+    await prisma.agent.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to delete agent' });

@@ -69,7 +69,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
 router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
@@ -89,7 +89,7 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const phoneNumber = await prisma.phoneNumber.update({
-      where: { id: req.params.id },
+      where: { id: req.params.id as string },
       data: { agentId },
       include: { agent: { select: { id: true, name: true } } },
     });
@@ -108,7 +108,7 @@ router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
 router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const existing = await prisma.phoneNumber.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
     if (!existing) {
       res.status(404).json({ error: 'Phone number not found' });
@@ -119,7 +119,7 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
       await vobizService.releasePhoneNumber(existing.sipTrunkId);
     }
 
-    await prisma.phoneNumber.delete({ where: { id: req.params.id } });
+    await prisma.phoneNumber.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to release phone number' });

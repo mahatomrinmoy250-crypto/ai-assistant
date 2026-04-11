@@ -53,7 +53,7 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
 router.get('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const call = await prisma.call.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
       include: {
         agent: true,
         messages: { orderBy: { createdAt: 'asc' } },
@@ -122,7 +122,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
 router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const call = await prisma.call.findFirst({
-      where: { id: req.params.id, workspaceId: req.user!.workspaceId },
+      where: { id: req.params.id as string, workspaceId: req.user!.workspaceId },
     });
     if (!call) {
       res.status(404).json({ error: 'Call not found' });
@@ -198,7 +198,7 @@ router.post('/inbound', async (req: Request, res: Response) => {
  */
 router.all('/:id/answer', async (req: Request, res: Response) => {
   try {
-    const call = await prisma.call.findUnique({ where: { id: req.params.id } });
+    const call = await prisma.call.findUnique({ where: { id: req.params.id as string } });
     if (!call) {
       res.status(404).send('Call not found');
       return;
