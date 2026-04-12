@@ -23,6 +23,9 @@ import webhooksRoutes from './routes/webhooks';
 const app = express();
 const httpServer = createServer(app);
 
+// Trust Traefik reverse proxy (fixes X-Forwarded-For for rate-limiting and IP detection)
+app.set('trust proxy', 1);
+
 // WebSocket server (shares HTTP server)
 const wss = new WebSocketServer({
   server: httpServer,

@@ -160,6 +160,7 @@ router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Res
 router.post('/inbound', async (req: Request, res: Response) => {
   try {
     const { To, From, CallUUID } = req.body;
+    console.log(`[Inbound] Call received - To: ${To}, From: ${From}, CallUUID: ${CallUUID}, body:`, JSON.stringify(req.body));
 
     const phoneNumber = await prisma.phoneNumber.findFirst({
       where: { number: To, isActive: true },
