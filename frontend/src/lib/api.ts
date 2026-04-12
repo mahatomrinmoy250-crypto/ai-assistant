@@ -69,6 +69,8 @@ export const api = {
 
   // ── Phone Numbers ───────────────────────────────────────────────────────────
   getPhoneNumbers: () => request<PhoneNumber[]>('/api/phone-numbers'),
+  linkPhoneNumber: (number: string) =>
+    request<PhoneNumber>('/api/phone-numbers/link', { method: 'POST', body: JSON.stringify({ number }) }),
   getAvailableNumbers: (countryCode = 'IN') =>
     request<AvailableNumber[]>(`/api/phone-numbers/available?countryCode=${countryCode}`),
   purchasePhoneNumber: (number: string) =>

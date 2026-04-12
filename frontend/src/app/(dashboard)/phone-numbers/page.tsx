@@ -1,52 +1,53 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, PhoneNumber, Assistant } from '@/lib/api';
+import { api, PhoneNumber, Agent } from '@/lib/api';
 
 export default function PhoneNumbersPage() {
   const [numbers, setNumbers] = useState<PhoneNumber[]>([]);
-  const [assistants, setAssistants] = useState<Assistant[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showPurchase, setShowPurchase] = useState(false);
-  const [areaCode, setAreaCode] = useState('415');
-  const [purchasing, setPurchasing] = useState(false);
+  const [showLink, setShowLink] = useState(false);
+  const [linkNumber, setLinkNumber] = useState('');
+  const [linking, setLinking] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     async function load() {
-      const [nums, assists] = await Promise.all([
+      const [nums, agts] = await Promise.all([
         api.getPhoneNumbers(),
         api.getAssistants(),
       ]);
       setNumbers(nums);
-      setAssistants(assists);
+      setAgents(agts);
       setLoading(false);
     }
     load();
   }, []);
 
-  async function handlePurchase(e: React.FormEvent) {
+  async function handleLink(e: React.FormEvent) {
     e.preventDefault();
-    setPurchasing(true);
+    setLinking(true);
     setError('');
     try {
-      const num = await api.purchasePhoneNumber(areaCode);
+      const num = await api.linkPhoneNumber(linkNumber.trim());
       setNumbers((prev) => [num, ...prev]);
-      setShowPurchase(false);
+      setShowLink(false);
+      setLinkNumber('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to purchase number');
+      setError(err instanceof Error ? err.message : 'Failed to link number');
     } finally {
-      setPurchasing(false);
+      setLinking(false);
     }
   }
 
-  async function handleAssign(numberId: string, assistantId: string | null) {
-    const updated = await api.assignAssistant(numberId, assistantId);
+  async function handleAssign(numberId: string, agentId: string | null) {
+    const updated = await api.assignAgent(numberId, agentId);
     setNumbers((prev) => prev.map((n) => (n.id === numberId ? updated : n)));
   }
 
   async function handleRelease(id: string) {
-    if (!confirm('Release this phone number? This cannot be undone.')) return;
+    if (!confirm('Remove this phone number from your account?')) return;
     await api.releasePhoneNumber(id);
     setNumbers((prev) => prev.filter((n) => n.id !== id));
   }
@@ -56,31 +57,32 @@ export default function PhoneNumbersPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Phone Numbers</h1>
-          <p className="text-gray-500 mt-1">Manage your Twilio phone numbers</p>
+          <p className="text-gray-500 mt-1">Link your Vobiz numbers and assign agents</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowPurchase(true)}>
-          + Buy Number
+        <button className="btn-primary" onClick={() => setShowLink(true)}>
+          + Link Number
         </button>
       </div>
 
-      {showPurchase && (
+      {showLink && (
         <div className="card p-6 mb-6">
-          <h2 className="font-semibold text-gray-900 mb-4">Purchase Phone Number</h2>
-          <form onSubmit={handlePurchase} className="flex gap-4 items-end">
+          <h2 className="font-semibold text-gray-900 mb-1">Link Existing Vobiz Number</h2>
+          <p className="text-sm text-gray-500 mb-4">Add a number you already have in Vobiz to assign it to an agent</p>
+          <form onSubmit={handleLink} className="flex gap-4 items-end flex-wrap">
             <div>
-              <label className="label">Area Code (US)</label>
+              <label className="label">Phone Number</label>
               <input
-                className="input w-32"
-                placeholder="415"
-                value={areaCode}
-                onChange={(e) => setAreaCode(e.target.value)}
+                className="input w-48"
+                placeholder="+918065481672"
+                value={linkNumber}
+                onChange={(e) => setLinkNumber(e.target.value)}
               />
             </div>
-            {error && <p className="text-red-600 text-sm">{error}</p>}
-            <button type="submit" className="btn-primary" disabled={purchasing}>
-              {purchasing ? 'Purchasing...' : 'Purchase'}
+            {error && <p className="text-red-600 text-sm self-center">{error}</p>}
+            <button type="submit" className="btn-primary" disabled={linking}>
+              {linking ? 'Linking...' : 'Link Number'}
             </button>
-            <button type="button" className="btn-secondary" onClick={() => setShowPurchase(false)}>
+            <button type="button" className="btn-secondary" onClick={() => { setShowLink(false); setError(''); }}>
               Cancel
             </button>
           </form>
@@ -95,9 +97,9 @@ export default function PhoneNumbersPage() {
         <div className="card p-12 text-center">
           <div className="text-5xl mb-4">📱</div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No phone numbers</h3>
-          <p className="text-gray-500 mb-6">Purchase a Twilio number to receive inbound calls</p>
-          <button className="btn-primary" onClick={() => setShowPurchase(true)}>
-            Buy a Number
+          <p className="text-gray-500 mb-6">Link your Vobiz number to start receiving inbound calls</p>
+          <button className="btn-primary" onClick={() => setShowLink(true)}>
+            Link a Number
           </button>
         </div>
       ) : (
@@ -106,8 +108,8 @@ export default function PhoneNumbersPage() {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Number</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Friendly Name</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Assigned Assistant</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">Provider</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">Assigned Agent</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
@@ -115,15 +117,15 @@ export default function PhoneNumbersPage() {
               {numbers.map((num) => (
                 <tr key={num.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-gray-900">{num.number}</td>
-                  <td className="px-4 py-3 text-gray-500">{num.friendlyName || '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 capitalize">{num.provider}</td>
                   <td className="px-4 py-3">
                     <select
                       className="input text-xs py-1"
-                      value={num.assistantId || ''}
+                      value={num.agentId || ''}
                       onChange={(e) => handleAssign(num.id, e.target.value || null)}
                     >
-                      <option value="">— No assistant —</option>
-                      {assistants.map((a) => (
+                      <option value="">— No agent —</option>
+                      {agents.map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
@@ -133,7 +135,7 @@ export default function PhoneNumbersPage() {
                       onClick={() => handleRelease(num.id)}
                       className="text-red-600 hover:underline text-xs"
                     >
-                      Release
+                      Remove
                     </button>
                   </td>
                 </tr>

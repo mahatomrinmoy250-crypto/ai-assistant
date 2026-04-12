@@ -44,6 +44,37 @@ router.get('/available', async (_req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// POST /api/phone-numbers/link — link an existing Vobiz number (no purchase)
+router.post('/link', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { number } = z.object({ number: z.string().min(5) }).parse(req.body);
+
+    const existing = await prisma.phoneNumber.findFirst({
+      where: { number, workspaceId: req.user!.workspaceId },
+    });
+    if (existing) {
+      res.status(409).json({ error: 'This number is already linked to your account' });
+      return;
+    }
+
+    const phoneNumber = await prisma.phoneNumber.create({
+      data: {
+        number,
+        workspaceId: req.user!.workspaceId,
+        provider: 'vobiz',
+      },
+    });
+
+    res.status(201).json(phoneNumber);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: err.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to link phone number' });
+    }
+  }
+});
+
 // POST /api/phone-numbers — purchase a number
 router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
