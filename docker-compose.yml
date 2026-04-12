@@ -74,7 +74,7 @@ services:
       - traefik.http.routers.voiceai-api.tls.certresolver=mytlschallenge
       - traefik.http.services.voiceai-api.loadbalancer.server.port=3001
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -107,7 +107,7 @@ services:
       - traefik.http.routers.voiceai-app.tls.certresolver=mytlschallenge
       - traefik.http.services.voiceai-app.loadbalancer.server.port=3000
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/']
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/']
       interval: 30s
       timeout: 10s
       retries: 3
