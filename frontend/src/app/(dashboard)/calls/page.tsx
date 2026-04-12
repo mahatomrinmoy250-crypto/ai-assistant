@@ -22,7 +22,7 @@ export default function CallsPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [showOutbound, setShowOutbound] = useState(false);
-  const [outboundForm, setOutboundForm] = useState({ assistantId: '', toNumber: '' });
+  const [outboundForm, setOutboundForm] = useState({ agentId: '', toNumber: '' });
   const [outboundLoading, setOutboundLoading] = useState(false);
   const [outboundError, setOutboundError] = useState('');
 
@@ -54,7 +54,7 @@ export default function CallsPage() {
       const call = await api.createCall(outboundForm);
       setCalls((prev) => [call, ...prev]);
       setShowOutbound(false);
-      setOutboundForm({ assistantId: '', toNumber: '' });
+      setOutboundForm({ agentId: '', toNumber: '' });
     } catch (err) {
       setOutboundError(err instanceof Error ? err.message : 'Failed to start call');
     } finally {
@@ -91,8 +91,8 @@ export default function CallsPage() {
                 <label className="label">Assistant</label>
                 <select
                   className="input"
-                  value={outboundForm.assistantId}
-                  onChange={(e) => setOutboundForm({ ...outboundForm, assistantId: e.target.value })}
+                  value={outboundForm.agentId}
+                  onChange={(e) => setOutboundForm({ ...outboundForm, agentId: e.target.value })}
                   required
                 >
                   <option value="">Select assistant...</option>
