@@ -27,9 +27,9 @@ const httpServer = createServer(app);
 app.set('trust proxy', 1);
 
 // WebSocket server (shares HTTP server)
+// No path restriction — call-ws handler validates /ws/call/{id} internally
 const wss = new WebSocketServer({
   server: httpServer,
-  path: '/ws',
 });
 
 setupCallWebSocket(wss);
