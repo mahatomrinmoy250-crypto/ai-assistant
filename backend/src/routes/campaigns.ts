@@ -44,7 +44,13 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       },
       orderBy: { createdAt: 'desc' },
     });
-    res.json(campaigns);
+    const mapped = campaigns.map((c) => ({
+      ...c,
+      calledContacts: c.calledCount,
+      successfulCalls: c.successCount,
+      failedCalls: c.failedCount,
+    }));
+    res.json({ campaigns: mapped, total: mapped.length });
   } catch {
     res.status(500).json({ error: 'Failed to list campaigns' });
   }

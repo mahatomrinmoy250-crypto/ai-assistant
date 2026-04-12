@@ -16,7 +16,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       where: { workspaceId: req.user!.workspaceId },
       orderBy: { createdAt: 'desc' },
     });
-    res.json(lists);
+    res.json({ contactLists: lists, total: lists.length });
   } catch {
     res.status(500).json({ error: 'Failed to list contact lists' });
   }

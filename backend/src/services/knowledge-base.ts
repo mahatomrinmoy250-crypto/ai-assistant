@@ -66,7 +66,7 @@ export async function createKnowledgeBase(
 export async function listKnowledgeBases(workspaceId: string) {
   return prisma.knowledgeBase.findMany({
     where: { workspaceId },
-    include: { _count: { select: { documents: true } } },
+    include: { _count: { select: { documents: true, agents: true } } },
     orderBy: { createdAt: 'desc' },
   });
 }

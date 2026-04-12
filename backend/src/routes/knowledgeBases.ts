@@ -22,7 +22,12 @@ router.use(authMiddleware);
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const kbs = await listKnowledgeBases(req.user!.workspaceId);
-    res.json(kbs);
+    const knowledgeBases = kbs.map((kb) => ({
+      ...kb,
+      documentCount: kb._count.documents,
+      assignedAgentCount: kb._count.agents,
+    }));
+    res.json({ knowledgeBases, total: knowledgeBases.length });
   } catch {
     res.status(500).json({ error: 'Failed to list knowledge bases' });
   }

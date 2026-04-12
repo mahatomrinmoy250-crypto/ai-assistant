@@ -31,7 +31,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       ],
     });
 
-    res.json(bookings);
+    res.json({ bookings, total: bookings.length });
   } catch {
     res.status(500).json({ error: 'Failed to list bookings' });
   }
