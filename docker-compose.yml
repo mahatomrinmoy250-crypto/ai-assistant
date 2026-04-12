@@ -1,6 +1,8 @@
 networks:
   voice_net:
     driver: bridge
+  n8n_default:
+    external: true
 
 services:
 
@@ -62,6 +64,15 @@ services:
         condition: service_healthy
     networks:
       - voice_net
+      - n8n_default
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.voiceai-api.rule=Host(`api.neurosetu.cloud`)
+      - traefik.http.routers.voiceai-api.entrypoints=websecure
+      - traefik.http.routers.voiceai-api.tls=true
+      - traefik.http.routers.voiceai-api.tls.certresolver=mytlschallenge
+      - traefik.http.services.voiceai-api.loadbalancer.server.port=3001
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
       interval: 30s
@@ -75,7 +86,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:3001}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.neurosetu.cloud}
     restart: unless-stopped
     ports:
       - '3000:3000'
@@ -86,6 +97,15 @@ services:
         condition: service_healthy
     networks:
       - voice_net
+      - n8n_default
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.voiceai-app.rule=Host(`app.neurosetu.cloud`)
+      - traefik.http.routers.voiceai-app.entrypoints=websecure
+      - traefik.http.routers.voiceai-app.tls=true
+      - traefik.http.routers.voiceai-app.tls.certresolver=mytlschallenge
+      - traefik.http.services.voiceai-app.loadbalancer.server.port=3000
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/']
       interval: 30s
