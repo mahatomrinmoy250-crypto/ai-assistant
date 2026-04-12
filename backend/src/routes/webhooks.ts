@@ -33,7 +33,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       },
       orderBy: { createdAt: 'desc' },
     });
-    res.json(endpoints);
+    res.json({ webhooks: endpoints, total: endpoints.length });
   } catch {
     res.status(500).json({ error: 'Failed to list webhooks' });
   }
@@ -129,17 +129,23 @@ router.get('/:id/deliveries', async (req: AuthenticatedRequest, res: Response) =
   if (!existing) { res.status(404).json({ error: 'Webhook not found' }); return; }
 
   try {
-    const deliveries = await prisma.webhookDelivery.findMany({
+    const raw = await prisma.webhookDelivery.findMany({
       where: { webhookEndpointId: existing.id },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: {
         id: true, event: true, status: true,
-        statusCode: true, attempts: true,
-        lastAttemptAt: true, createdAt: true,
+        statusCode: true, createdAt: true,
       },
     });
-    res.json(deliveries);
+    const deliveries = raw.map((d) => ({
+      id: d.id,
+      event: d.event,
+      success: d.status === 'success',
+      statusCode: d.statusCode ?? undefined,
+      createdAt: d.createdAt,
+    }));
+    res.json({ deliveries });
   } catch {
     res.status(500).json({ error: 'Failed to get deliveries' });
   }
