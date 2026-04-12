@@ -162,8 +162,10 @@ router.post('/inbound', async (req: Request, res: Response) => {
     const { To, From, CallUUID } = req.body;
     console.log(`[Inbound] Call received - To: ${To}, From: ${From}, CallUUID: ${CallUUID}, body:`, JSON.stringify(req.body));
 
+    // Normalize: try both with and without leading '+'
+    const toVariants = [To, `+${To}`, To.replace(/^\+/, '')];
     const phoneNumber = await prisma.phoneNumber.findFirst({
-      where: { number: To, isActive: true },
+      where: { number: { in: toVariants }, isActive: true },
       include: { agent: true },
     });
 
