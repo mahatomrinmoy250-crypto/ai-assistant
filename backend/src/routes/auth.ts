@@ -185,7 +185,7 @@ router.get('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
       where: { id: req.user!.workspaceId },
       select: {
         id: true, name: true, creditsBalance: true, createdAt: true,
-        vobizApiKey: true, vobizBaseUrl: true, vobizFromNumber: true,
+        vobizAuthId: true, vobizAuthToken: true, vobizBaseUrl: true, vobizFromNumber: true,
       },
     });
     res.json({ userId: req.user!.id, email: req.user!.email, workspace });
@@ -199,7 +199,8 @@ router.patch('/workspace', authMiddleware, async (req: AuthenticatedRequest, res
   try {
     const schema = z.object({
       name: z.string().min(1).optional(),
-      vobizApiKey: z.string().optional(),
+      vobizAuthId: z.string().optional(),
+      vobizAuthToken: z.string().optional(),
       vobizBaseUrl: z.string().url().optional(),
       vobizFromNumber: z.string().optional(),
     });
@@ -209,7 +210,7 @@ router.patch('/workspace', authMiddleware, async (req: AuthenticatedRequest, res
       data,
       select: {
         id: true, name: true, creditsBalance: true,
-        vobizApiKey: true, vobizBaseUrl: true, vobizFromNumber: true,
+        vobizAuthId: true, vobizAuthToken: true, vobizBaseUrl: true, vobizFromNumber: true,
       },
     });
     res.json(workspace);

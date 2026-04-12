@@ -10,8 +10,9 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
 
   const [form, setForm] = useState({
-    vobizApiKey: '',
-    vobizBaseUrl: 'https://api.vobiz.ai/v1',
+    vobizAuthId: '',
+    vobizAuthToken: '',
+    vobizBaseUrl: 'https://api.vobiz.ai',
     vobizFromNumber: '',
   });
 
@@ -21,8 +22,9 @@ export default function SettingsPage() {
         const me = await api.getMe();
         if (me.workspace) {
           setForm({
-            vobizApiKey: (me.workspace as any).vobizApiKey || '',
-            vobizBaseUrl: (me.workspace as any).vobizBaseUrl || 'https://api.vobiz.ai/v1',
+            vobizAuthId: (me.workspace as any).vobizAuthId || '',
+            vobizAuthToken: (me.workspace as any).vobizAuthToken || '',
+            vobizBaseUrl: (me.workspace as any).vobizBaseUrl || 'https://api.vobiz.ai',
             vobizFromNumber: (me.workspace as any).vobizFromNumber || '',
           });
         }
@@ -83,16 +85,30 @@ export default function SettingsPage() {
 
           <div className="space-y-4">
             <div>
-              <label className="label">Vobiz API Key</label>
+              <label className="label">Vobiz Auth ID</label>
+              <input
+                type="text"
+                className="input"
+                placeholder="Your Vobiz Auth ID"
+                value={form.vobizAuthId}
+                onChange={(e) => setForm({ ...form, vobizAuthId: e.target.value })}
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Found in your Vobiz dashboard under API Settings → Auth ID
+              </p>
+            </div>
+
+            <div>
+              <label className="label">Vobiz Auth Token</label>
               <input
                 type="password"
                 className="input"
-                placeholder="Enter your Vobiz API key"
-                value={form.vobizApiKey}
-                onChange={(e) => setForm({ ...form, vobizApiKey: e.target.value })}
+                placeholder="Your Vobiz Auth Token"
+                value={form.vobizAuthToken}
+                onChange={(e) => setForm({ ...form, vobizAuthToken: e.target.value })}
               />
               <p className="text-xs text-gray-400 mt-1">
-                Get from your Vobiz dashboard → API Settings
+                Found in your Vobiz dashboard under API Settings → Auth Token
               </p>
             </div>
 
@@ -115,12 +131,12 @@ export default function SettingsPage() {
               <input
                 type="text"
                 className="input"
-                placeholder="https://api.vobiz.ai/v1"
+                placeholder="https://api.vobiz.ai"
                 value={form.vobizBaseUrl}
                 onChange={(e) => setForm({ ...form, vobizBaseUrl: e.target.value })}
               />
               <p className="text-xs text-gray-400 mt-1">
-                Default: https://api.vobiz.ai/v1 (do not change unless Vobiz told you to)
+                Default: https://api.vobiz.ai (do not change unless Vobiz told you to)
               </p>
             </div>
           </div>

@@ -24,8 +24,9 @@ export const config = {
 
   // Vobiz Telephony
   vobiz: {
-    apiKey: process.env.VOBIZ_API_KEY || '',
-    apiBaseUrl: process.env.VOBIZ_API_BASE_URL || 'https://api.vobiz.ai/v1',
+    authId: process.env.VOBIZ_AUTH_ID || '',
+    authToken: process.env.VOBIZ_AUTH_TOKEN || '',
+    apiBaseUrl: process.env.VOBIZ_API_BASE_URL || 'https://api.vobiz.ai',
     webhookBaseUrl: process.env.VOBIZ_WEBHOOK_BASE_URL || '',
     defaultFromNumber: process.env.VOBIZ_FROM_NUMBER || '',
   },

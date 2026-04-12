@@ -28,8 +28,8 @@ router.get('/available', async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const { countryCode = 'IN', limit = '10' } = _req.query;
     const workspace = await prisma.workspace.findUnique({ where: { id: _req.user!.workspaceId } });
-    if (!workspace?.vobizApiKey) {
-      res.status(400).json({ error: 'Vobiz API key not configured. Go to Settings to add it.' });
+    if (!workspace?.vobizAuthId || !workspace?.vobizAuthToken) {
+      res.status(400).json({ error: 'Vobiz credentials not configured. Go to Settings to add your Auth ID and Auth Token.' });
       return;
     }
     const wsVobiz = VobizService.forWorkspace(workspace);
@@ -49,8 +49,8 @@ router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { number } = z.object({ number: z.string() }).parse(req.body);
     const workspace = await prisma.workspace.findUnique({ where: { id: req.user!.workspaceId } });
-    if (!workspace?.vobizApiKey) {
-      res.status(400).json({ error: 'Vobiz API key not configured. Go to Settings to add it.' });
+    if (!workspace?.vobizAuthId || !workspace?.vobizAuthToken) {
+      res.status(400).json({ error: 'Vobiz credentials not configured. Go to Settings to add your Auth ID and Auth Token.' });
       return;
     }
     const wsVobiz = VobizService.forWorkspace(workspace);
