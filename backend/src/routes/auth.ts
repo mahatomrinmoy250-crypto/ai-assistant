@@ -183,11 +183,42 @@ router.get('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
   try {
     const workspace = await prisma.workspace.findUnique({
       where: { id: req.user!.workspaceId },
-      select: { id: true, name: true, creditsBalance: true, createdAt: true },
+      select: {
+        id: true, name: true, creditsBalance: true, createdAt: true,
+        vobizApiKey: true, vobizBaseUrl: true, vobizFromNumber: true,
+      },
     });
     res.json({ userId: req.user!.id, email: req.user!.email, workspace });
   } catch {
     res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+// PATCH /api/auth/workspace — update workspace settings (name, Vobiz credentials)
+router.patch('/workspace', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).optional(),
+      vobizApiKey: z.string().optional(),
+      vobizBaseUrl: z.string().url().optional(),
+      vobizFromNumber: z.string().optional(),
+    });
+    const data = schema.parse(req.body);
+    const workspace = await prisma.workspace.update({
+      where: { id: req.user!.workspaceId },
+      data,
+      select: {
+        id: true, name: true, creditsBalance: true,
+        vobizApiKey: true, vobizBaseUrl: true, vobizFromNumber: true,
+      },
+    });
+    res.json(workspace);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: err.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to update workspace' });
+    }
   }
 });
 

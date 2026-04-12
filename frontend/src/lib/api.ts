@@ -32,7 +32,9 @@ export const api = {
     request<{ token: string; workspace: Workspace }>('/api/auth/register', {
       method: 'POST', body: JSON.stringify(data),
     }),
-  getMe: () => request<{ userId: string; email: string; workspace: Workspace }>('/api/auth/me'),
+  getMe: () => request<{ userId: string; email: string; workspace: Workspace & { vobizApiKey?: string; vobizBaseUrl?: string; vobizFromNumber?: string } }>('/api/auth/me'),
+  updateWorkspace: (data: { name?: string; vobizApiKey?: string; vobizBaseUrl?: string; vobizFromNumber?: string }) =>
+    request<Workspace>('/api/auth/workspace', { method: 'PATCH', body: JSON.stringify(data) }),
   getApiKeys: () => request<ApiKey[]>('/api/auth/api-keys'),
   createApiKey: (name: string) =>
     request<ApiKey & { key: string }>('/api/auth/api-keys', {

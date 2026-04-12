@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { vobizService } from '../services/telephony/vobiz';
+import { vobizService, VobizService } from '../services/telephony/vobiz';
 import { config } from '../config';
 import { getSession } from '../services/call-session';
 
@@ -75,15 +75,21 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
   try {
     const { agentId, toNumber, fromNumber } = CreateCallSchema.parse(req.body);
 
-    const agent = await prisma.agent.findFirst({
-      where: { id: agentId, workspaceId: req.user!.workspaceId },
-    });
-    if (!agent) {
-      res.status(404).json({ error: 'Agent not found' });
+    const [agent, workspace] = await Promise.all([
+      prisma.agent.findFirst({ where: { id: agentId, workspaceId: req.user!.workspaceId } }),
+      prisma.workspace.findUnique({ where: { id: req.user!.workspaceId } }),
+    ]);
+    if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+    if (!workspace) { res.status(404).json({ error: 'Workspace not found' }); return; }
+
+    const from = fromNumber || workspace.vobizFromNumber || config.vobiz.defaultFromNumber;
+
+    if (!from) {
+      res.status(400).json({ error: 'No from-number configured. Please add your Vobiz number in Settings.' });
       return;
     }
 
-    const from = fromNumber || config.vobiz.defaultFromNumber;
+    const wsVobiz = VobizService.forWorkspace(workspace);
 
     // Create call record first (need the ID for the answer URL)
     const call = await prisma.call.create({
@@ -100,7 +106,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
 
     const answerUrl = `${config.vobiz.webhookBaseUrl}/api/calls/${call.id}/answer`;
 
-    const vobizCallUuid = await vobizService.makeCall(toNumber, from, answerUrl);
+    const vobizCallUuid = await wsVobiz.makeCall(toNumber, from, answerUrl);
 
     const updatedCall = await prisma.call.update({
       where: { id: call.id },

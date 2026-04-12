@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { vobizService } from '../services/telephony/vobiz';
+import { VobizService } from '../services/telephony/vobiz';
 import { config } from '../config';
 
 const router = Router();
@@ -27,7 +27,13 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/available', async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const { countryCode = 'IN', limit = '10' } = _req.query;
-    const numbers = await vobizService.listAvailableNumbers(
+    const workspace = await prisma.workspace.findUnique({ where: { id: _req.user!.workspaceId } });
+    if (!workspace?.vobizApiKey) {
+      res.status(400).json({ error: 'Vobiz API key not configured. Go to Settings to add it.' });
+      return;
+    }
+    const wsVobiz = VobizService.forWorkspace(workspace);
+    const numbers = await wsVobiz.listAvailableNumbers(
       countryCode as string,
       parseInt(limit as string)
     );
@@ -42,10 +48,16 @@ router.get('/available', async (_req: AuthenticatedRequest, res: Response) => {
 router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { number } = z.object({ number: z.string() }).parse(req.body);
+    const workspace = await prisma.workspace.findUnique({ where: { id: req.user!.workspaceId } });
+    if (!workspace?.vobizApiKey) {
+      res.status(400).json({ error: 'Vobiz API key not configured. Go to Settings to add it.' });
+      return;
+    }
+    const wsVobiz = VobizService.forWorkspace(workspace);
 
-    const { uuid, number: purchased } = await vobizService.purchasePhoneNumber(number);
+    const { uuid, number: purchased } = await wsVobiz.purchasePhoneNumber(number);
 
-    await vobizService.updateNumberWebhook(
+    await wsVobiz.updateNumberWebhook(
       uuid,
       `${config.vobiz.webhookBaseUrl}/api/calls/inbound`
     );
@@ -116,7 +128,9 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     if (existing.sipTrunkId) {
-      await vobizService.releasePhoneNumber(existing.sipTrunkId);
+      const workspace = await prisma.workspace.findUnique({ where: { id: req.user!.workspaceId } });
+      const wsVobiz = VobizService.forWorkspace(workspace || {});
+      await wsVobiz.releasePhoneNumber(existing.sipTrunkId);
     }
 
     await prisma.phoneNumber.delete({ where: { id: req.params.id as string } });

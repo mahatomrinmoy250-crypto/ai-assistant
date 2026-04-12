@@ -16,6 +16,10 @@ model Workspace {
   creditsBalance  Decimal  @default(50.0) @map("credits_balance")
   avgBookingValue Decimal  @default(0.0) @map("avg_booking_value")
   isActive        Boolean  @default(true) @map("is_active")
+  // Vobiz credentials (per-workspace BYOK)
+  vobizApiKey     String?  @map("vobiz_api_key")
+  vobizBaseUrl    String?  @map("vobiz_base_url")
+  vobizFromNumber String?  @map("vobiz_from_number")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

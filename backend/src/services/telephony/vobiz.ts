@@ -15,9 +15,14 @@ export class VobizService {
   private apiKey: string;
   private baseUrl: string;
 
-  constructor() {
-    this.apiKey = config.vobiz.apiKey;
-    this.baseUrl = config.vobiz.apiBaseUrl;
+  constructor(apiKey?: string, baseUrl?: string) {
+    this.apiKey = apiKey || config.vobiz.apiKey;
+    this.baseUrl = baseUrl || config.vobiz.apiBaseUrl;
+  }
+
+  /** Create a workspace-scoped instance */
+  static forWorkspace(ws: { vobizApiKey?: string | null; vobizBaseUrl?: string | null }) {
+    return new VobizService(ws.vobizApiKey || undefined, ws.vobizBaseUrl || undefined);
   }
 
   /**
