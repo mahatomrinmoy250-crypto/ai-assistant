@@ -12,9 +12,9 @@ import { config } from '../../config';
  *
  * Flow:
  *   1. Inbound call → Vobiz POSTs to /api/calls/inbound (Answer URL)
- *   2. We return XML with <Stream url="wss://..."/> pointing to our WebSocket
- *   3. Vobiz opens WebSocket and streams mulaw 8kHz audio bidirectionally
- *   4. We process audio with Gemini Live and send audio response back
+ *   2. We return XML with <Stream> (URL as text content) pointing to our WebSocket
+ *   3. Vobiz opens WebSocket and streams L16 PCM 8kHz audio bidirectionally
+ *   4. We process audio with Gemini Live and send L16 PCM audio back via playAudio event
  */
 
 export class VobizService {
@@ -55,21 +55,18 @@ export class VobizService {
 
   /**
    * Generate XML for inbound/outbound call — streams audio to our WebSocket.
-   * Trying url attribute format (Plivo/Vobiz original format).
-   */
-  /**
-   * Generate XML for inbound/outbound call — streams audio to our WebSocket.
-   * NOTE: Vobiz <Stream> feature must be enabled by Vobiz support for the account.
-   * Uses url attribute format (Plivo standard).
+   * Vobiz requires the WebSocket URL as TEXT CONTENT inside <Stream>, not as
+   * a url attribute. contentType must be audio/x-l16;rate=8000.
    */
   generateInboundXML(callId: string): string {
     const base = new URL(config.vobiz.webhookBaseUrl);
     const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${base.host}/ws/call/${callId}`;
+    const statusUrl = `${config.vobiz.webhookBaseUrl}/api/calls/status`;
     console.log(`[Vobiz] generateInboundXML callId=${callId} wsUrl=${wsUrl}`);
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Stream url="${wsUrl}" keepCallAlive="true" bidirectional="true"/>
+  <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-l16;rate=8000" statusCallbackUrl="${statusUrl}">${wsUrl}</Stream>
 </Response>`;
   }
 

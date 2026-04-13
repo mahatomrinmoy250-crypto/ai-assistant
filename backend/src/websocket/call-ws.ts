@@ -26,7 +26,7 @@ interface VobizMediaMessage {
     track: string;
     chunk: string;
     timestamp: string;
-    payload: string;  // base64 mulaw
+    payload: string;  // base64 L16 PCM (audio/x-l16)
   };
   stop?: {
     callSid: string;

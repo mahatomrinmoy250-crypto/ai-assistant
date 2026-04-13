@@ -213,10 +213,10 @@ export class CallSession {
     }
   }
 
-  processAudioChunk(mulawBase64: string): void {
+  processAudioChunk(l16Base64: string): void {
     if (this.isClosed || !this.gemini.isConnected()) return;
     try {
-      const pcm16k = vobizAudioToGemini(mulawBase64);
+      const pcm16k = vobizAudioToGemini(l16Base64);
       this.gemini.sendAudio(pcm16k);
     } catch (err) {
       console.error(`[CallSession ${this.data.callId}] Audio error:`, err);
@@ -228,7 +228,7 @@ export class CallSession {
   }
 
   private handleGeminiAudio(pcm24kBuffer: Buffer): void {
-    if (this.isClosed || !this.streamSid) return;
+    if (this.isClosed) return;
     this.audioQueue.push(pcm24kBuffer);
     if (!this.isSending) this.flushAudioQueue();
   }
@@ -242,13 +242,16 @@ export class CallSession {
     const chunk = this.audioQueue.shift()!;
 
     try {
-      const mulawBase64 = geminiAudioToVobiz(chunk);
-      if (this.ws.readyState === WebSocket.OPEN && this.streamSid) {
+      const l16Base64 = geminiAudioToVobiz(chunk);
+      if (this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(
           JSON.stringify({
-            event: 'media',
-            streamSid: this.streamSid,
-            media: { payload: mulawBase64 },
+            event: 'playAudio',
+            media: {
+              contentType: 'audio/x-l16',
+              sampleRate: 8000,
+              payload: l16Base64,
+            },
           }),
           () => setImmediate(() => this.flushAudioQueue())
         );
