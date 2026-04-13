@@ -57,6 +57,11 @@ export class VobizService {
    * Generate XML for inbound/outbound call — streams audio to our WebSocket.
    * Trying url attribute format (Plivo/Vobiz original format).
    */
+  /**
+   * Generate XML for inbound/outbound call — streams audio to our WebSocket.
+   * NOTE: Vobiz <Stream> feature must be enabled by Vobiz support for the account.
+   * Uses url attribute format (Plivo standard).
+   */
   generateInboundXML(callId: string): string {
     const base = new URL(config.vobiz.webhookBaseUrl);
     const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -64,7 +69,6 @@ export class VobizService {
     console.log(`[Vobiz] generateInboundXML callId=${callId} wsUrl=${wsUrl}`);
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Speak>Connecting to AI agent.</Speak>
   <Stream url="${wsUrl}" keepCallAlive="true" bidirectional="true"/>
 </Response>`;
   }
