@@ -115,17 +115,8 @@ export class CallSession {
         this.data.maxDurationMinutes * 60 * 1000
       );
 
-      // Queue greeting — sent after Gemini's setupComplete to avoid race condition
-      if (this.data.greetingMessage) {
-        this.gemini.queueGreeting(
-          `[Start the call by saying exactly]: ${this.data.greetingMessage}`
-        );
-        await this.saveMessage('assistant', this.data.greetingMessage);
-      } else {
-        this.gemini.queueGreeting(
-          '[The call just connected. Greet the caller warmly and ask how you can help.]'
-        );
-      }
+      // NOTE: sendClientContent/queueGreeting disabled for debugging — testing
+      // whether session stays alive without text injection. Gemini responds via audio.
 
       await dispatchWebhookEvent(this.data.workspaceId, 'call.started', {
         callId: this.data.callId,
