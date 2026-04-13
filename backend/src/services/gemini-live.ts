@@ -109,7 +109,9 @@ export class GeminiLiveSession {
   private session: Session | null = null;
   private cfg: GeminiLiveConfig | null = null;
   private isClosed = false;
+  private isReady = false;       // true after setupComplete
   private pendingGreeting: string | null = null;
+  private audioBeforeReady: Buffer[] = [];  // buffered audio chunks
 
   constructor(cfg: GeminiLiveConfig) {
     this.ai = new GoogleGenAI({ apiKey: config.gemini.apiKey });
@@ -134,14 +136,11 @@ export class GeminiLiveSession {
             voiceName: cfg.voiceName || 'Puck',
           },
         },
-        languageCode: cfg.languageCode || 'en-US',
       },
-      // Enable input/output transcripts for logging
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
       // Tool declarations (only when KB is available)
       ...(tools.length > 0 ? { tools } : {}),
     };
+    console.log('[GeminiLive] liveConfig:', JSON.stringify(liveConfig).slice(0, 400));
 
     this.session = await this.ai.live.connect({
       model: GEMINI_LIVE_MODEL,
@@ -170,11 +169,17 @@ export class GeminiLiveSession {
             console.log('[GeminiLive] msg raw:', JSON.stringify(message).slice(0, 300));
           }
 
-          // Send greeting only after session is fully set up
-          if (message.setupComplete && this.pendingGreeting) {
-            const greeting = this.pendingGreeting;
-            this.pendingGreeting = null;
-            this.sendText(greeting);
+          // Session ready — flush buffered audio then send greeting
+          if (message.setupComplete) {
+            this.isReady = true;
+            console.log(`[GeminiLive] setupComplete — flushing ${this.audioBeforeReady.length} buffered audio chunks`);
+            for (const buf of this.audioBeforeReady) this._sendAudioNow(buf);
+            this.audioBeforeReady = [];
+            if (this.pendingGreeting) {
+              const greeting = this.pendingGreeting;
+              this.pendingGreeting = null;
+              this.sendText(greeting);
+            }
           }
 
           // Audio response chunks
@@ -245,16 +250,26 @@ export class GeminiLiveSession {
   private sendAudioCount = 0;
 
   /**
-   * Send PCM audio (16kHz, 16-bit LE) to Gemini
+   * Send PCM audio (16kHz, 16-bit LE) to Gemini.
+   * Buffers chunks received before setupComplete.
    */
   sendAudio(pcm16kBuffer: Buffer): void {
-    if (this.isClosed || !this.session) return;
+    if (this.isClosed) return;
+    if (!this.isReady) {
+      // Keep only last 10 chunks to avoid memory buildup
+      this.audioBeforeReady.push(pcm16kBuffer);
+      if (this.audioBeforeReady.length > 10) this.audioBeforeReady.shift();
+      return;
+    }
+    this._sendAudioNow(pcm16kBuffer);
+  }
 
+  private _sendAudioNow(pcm16kBuffer: Buffer): void {
+    if (this.isClosed || !this.session) return;
     this.sendAudioCount++;
     if (this.sendAudioCount === 1 || this.sendAudioCount % 100 === 0) {
       console.log(`[GeminiLive] sendAudio #${this.sendAudioCount}, bytes: ${pcm16kBuffer.length}`);
     }
-
     this.session.sendRealtimeInput({
       audio: {
         data: pcm16kBuffer.toString('base64'),
