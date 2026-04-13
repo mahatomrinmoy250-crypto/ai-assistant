@@ -58,7 +58,9 @@ export class VobizService {
    * Trying url attribute format (Plivo/Vobiz original format).
    */
   generateInboundXML(callId: string): string {
-    const wsUrl = `wss://${new URL(config.vobiz.webhookBaseUrl).host}/ws/call/${callId}`;
+    const base = new URL(config.vobiz.webhookBaseUrl);
+    const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${base.host}/ws/call/${callId}`;
     console.log(`[Vobiz] generateInboundXML callId=${callId} wsUrl=${wsUrl}`);
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
