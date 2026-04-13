@@ -59,8 +59,10 @@ export class VobizService {
    */
   generateInboundXML(callId: string): string {
     const wsUrl = `wss://${new URL(config.vobiz.webhookBaseUrl).host}/ws/call/${callId}`;
+    console.log(`[Vobiz] generateInboundXML callId=${callId} wsUrl=${wsUrl}`);
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Speak>Connecting to AI agent.</Speak>
   <Stream url="${wsUrl}" keepCallAlive="true" bidirectional="true"/>
 </Response>`;
   }
