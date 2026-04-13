@@ -10,26 +10,25 @@ import {
 
 interface VobizMediaMessage {
   event: string;
-  sequenceNumber?: string;
-  streamSid?: string;
+  sequenceNumber?: number | string;
   start?: {
-    streamSid: string;
-    callSid: string;   // Vobiz uses callSid or CallUUID
-    tracks: string[];
+    callId: string;       // Vobiz call UUID
+    streamId: string;     // Vobiz uses streamId (not streamSid)
+    accountId?: string;
+    tracks: string[];     // e.g. ["inbound"]
     mediaFormat: {
-      encoding: string;
-      sampleRate: number;
-      channels: number;
+      encoding: string;   // e.g. "audio/x-l16"
+      sampleRate: number; // e.g. 8000
     };
   };
   media?: {
-    track: string;
-    chunk: string;
-    timestamp: string;
-    payload: string;  // base64 L16 PCM (audio/x-l16)
+    track?: string;
+    chunk?: string;
+    timestamp?: string;
+    payload: string;  // base64 L16 PCM (audio/x-l16, big-endian, 8kHz)
   };
   stop?: {
-    callSid: string;
+    callId?: string;
   };
 }
 
@@ -70,8 +69,8 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
           break;
 
         case 'start': {
-          const streamSid = message.start?.streamSid || (message as any).streamSid || (message as any).start_sid;
-          console.log(`[WS ${callId}] Stream started, sid: ${streamSid}`);
+          const streamId = message.start?.streamId;
+          console.log(`[WS ${callId}] Stream started, streamId: ${streamId}, tracks: ${JSON.stringify(message.start?.tracks)}, format: ${JSON.stringify(message.start?.mediaFormat)}`);
 
           try {
             const call = await prisma.call.findUnique({
@@ -104,7 +103,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
                 enableBooking: agent.enableBooking,
               },
               ws,
-              streamSid: streamSid,
+              streamSid: streamId,
             });
 
             registerSession(callId, session);

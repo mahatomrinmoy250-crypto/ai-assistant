@@ -157,11 +157,29 @@ export class GeminiLiveSession {
         onmessage: (message) => {
           if (this.isClosed || !this.cfg) return;
 
+          // Diagnostic: log structure of every message
+          const structure: string[] = [];
+          if (message.serverContent?.modelTurn) structure.push('modelTurn');
+          if (message.serverContent?.inputTranscription) structure.push('inputTx');
+          if (message.serverContent?.outputTranscription) structure.push('outputTx');
+          if (message.serverContent?.turnComplete) structure.push('turnComplete');
+          if (message.serverContent?.interrupted) structure.push('interrupted');
+          if (message.serverContent?.generationComplete) structure.push('genComplete');
+          if (message.toolCall) structure.push('toolCall');
+          if (message.setupComplete) structure.push('setupComplete');
+          if (structure.length > 0) {
+            console.log(`[GeminiLive] msg: ${structure.join(',')}`);
+          } else {
+            console.log('[GeminiLive] msg raw:', JSON.stringify(message).slice(0, 300));
+          }
+
           // Audio response chunks
           if (message.serverContent?.modelTurn?.parts) {
             for (const part of message.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType?.startsWith('audio/pcm')) {
-                const audioData = Buffer.from(part.inlineData.data || '', 'base64');
+              const mime = part.inlineData?.mimeType;
+              if (mime) console.log(`[GeminiLive] audio part mimeType: ${mime}`);
+              if (mime?.startsWith('audio/pcm')) {
+                const audioData = Buffer.from(part.inlineData?.data || '', 'base64');
                 this.cfg.onAudio(audioData);
               }
             }
@@ -220,11 +238,18 @@ export class GeminiLiveSession {
     console.log(`[GeminiLive] Connected — model: ${GEMINI_LIVE_MODEL}, tools: ${tools.length}`);
   }
 
+  private sendAudioCount = 0;
+
   /**
    * Send PCM audio (16kHz, 16-bit LE) to Gemini
    */
   sendAudio(pcm16kBuffer: Buffer): void {
     if (this.isClosed || !this.session) return;
+
+    this.sendAudioCount++;
+    if (this.sendAudioCount === 1 || this.sendAudioCount % 100 === 0) {
+      console.log(`[GeminiLive] sendAudio #${this.sendAudioCount}, bytes: ${pcm16kBuffer.length}`);
+    }
 
     this.session.sendRealtimeInput({
       audio: {
@@ -240,6 +265,7 @@ export class GeminiLiveSession {
   sendText(text: string): void {
     if (this.isClosed || !this.session) return;
 
+    console.log(`[GeminiLive] sendText: ${text.slice(0, 100)}`);
     this.session.sendClientContent({
       turns: [{ role: 'user', parts: [{ text }] }],
       turnComplete: true,
