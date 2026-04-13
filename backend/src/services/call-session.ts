@@ -257,7 +257,7 @@ export class CallSession {
           JSON.stringify({
             event: 'playAudio',
             media: {
-              contentType: 'audio/x-l16',
+              contentType: 'audio/x-l16;rate=8000',
               sampleRate: 8000,
               payload: l16Base64,
             },

@@ -12,10 +12,10 @@
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Decode L16 big-endian buffer → Int16Array
- * audio/x-l16 uses network byte order (big-endian) per RFC 3551
+ * Decode L16 buffer → Int16Array
+ * Vobiz inbound stream uses big-endian (RFC 3551 standard).
  */
-export function l16ToInt16(buf: Buffer): Int16Array {
+export function l16BEToInt16(buf: Buffer): Int16Array {
   const samples = new Int16Array(buf.length / 2);
   for (let i = 0; i < samples.length; i++) {
     samples[i] = buf.readInt16BE(i * 2);
@@ -24,12 +24,14 @@ export function l16ToInt16(buf: Buffer): Int16Array {
 }
 
 /**
- * Int16Array → L16 big-endian buffer
+ * Int16Array → L16 little-endian buffer
+ * Vobiz playAudio expects little-endian (empirically verified — big-endian
+ * produces static/noise on the receiving end).
  */
-export function int16ToL16(samples: Int16Array): Buffer {
+export function int16ToL16LE(samples: Int16Array): Buffer {
   const buf = Buffer.allocUnsafe(samples.length * 2);
   for (let i = 0; i < samples.length; i++) {
-    buf.writeInt16BE(samples[i], i * 2);
+    buf.writeInt16LE(samples[i], i * 2);
   }
   return buf;
 }
@@ -91,18 +93,18 @@ export function bufferToInt16(buf: Buffer): Int16Array {
  */
 export function vobizAudioToGemini(l16Base64: string): Buffer {
   const l16Buf = Buffer.from(l16Base64, 'base64');
-  const pcm8k = l16ToInt16(l16Buf);
+  const pcm8k = l16BEToInt16(l16Buf);
   const pcm16k = resamplePCM(pcm8k, 8000, 16000);
   return int16ToBuffer(pcm16k);
 }
 
 /**
- * Convert Gemini output PCM 24kHz → Vobiz L16 big-endian 8kHz base64
+ * Convert Gemini output PCM 24kHz → Vobiz L16 little-endian 8kHz base64
  * Gemini outputs: raw PCM 16-bit signed LE, 24kHz
- * Vobiz playAudio expects: audio/x-l16, 16-bit big-endian, 8kHz, mono
+ * Vobiz playAudio expects: audio/x-l16, 16-bit little-endian, 8kHz, mono
  */
 export function geminiAudioToVobiz(pcm24kBuffer: Buffer): string {
   const pcm24k = bufferToInt16(pcm24kBuffer);
   const pcm8k = resamplePCM(pcm24k, 24000, 8000);
-  return int16ToL16(pcm8k).toString('base64');
+  return int16ToL16LE(pcm8k).toString('base64');
 }
