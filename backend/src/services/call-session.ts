@@ -115,14 +115,14 @@ export class CallSession {
         this.data.maxDurationMinutes * 60 * 1000
       );
 
-      // Send greeting — if no configured message, Gemini opens the conversation
+      // Queue greeting — sent after Gemini's setupComplete to avoid race condition
       if (this.data.greetingMessage) {
-        this.gemini.sendText(
+        this.gemini.queueGreeting(
           `[Start the call by saying exactly]: ${this.data.greetingMessage}`
         );
         await this.saveMessage('assistant', this.data.greetingMessage);
       } else {
-        this.gemini.sendText(
+        this.gemini.queueGreeting(
           '[The call just connected. Greet the caller warmly and ask how you can help.]'
         );
       }

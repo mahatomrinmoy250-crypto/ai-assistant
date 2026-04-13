@@ -109,6 +109,7 @@ export class GeminiLiveSession {
   private session: Session | null = null;
   private cfg: GeminiLiveConfig | null = null;
   private isClosed = false;
+  private pendingGreeting: string | null = null;
 
   constructor(cfg: GeminiLiveConfig) {
     this.ai = new GoogleGenAI({ apiKey: config.gemini.apiKey });
@@ -138,10 +139,6 @@ export class GeminiLiveSession {
       // Enable input/output transcripts for logging
       inputAudioTranscription: {},
       outputAudioTranscription: {},
-      // Use minimal thinking for lowest latency
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
       // Tool declarations (only when KB is available)
       ...(tools.length > 0 ? { tools } : {}),
     };
@@ -171,6 +168,13 @@ export class GeminiLiveSession {
             console.log(`[GeminiLive] msg: ${structure.join(',')}`);
           } else {
             console.log('[GeminiLive] msg raw:', JSON.stringify(message).slice(0, 300));
+          }
+
+          // Send greeting only after session is fully set up
+          if (message.setupComplete && this.pendingGreeting) {
+            const greeting = this.pendingGreeting;
+            this.pendingGreeting = null;
+            this.sendText(greeting);
           }
 
           // Audio response chunks
@@ -257,6 +261,15 @@ export class GeminiLiveSession {
         mimeType: 'audio/pcm;rate=16000',
       },
     });
+  }
+
+  /**
+   * Queue a greeting to be sent once setupComplete is received.
+   * Call this before the session setup is confirmed.
+   */
+  queueGreeting(text: string): void {
+    this.pendingGreeting = text;
+    console.log(`[GeminiLive] greeting queued: ${text.slice(0, 80)}`);
   }
 
   /**
