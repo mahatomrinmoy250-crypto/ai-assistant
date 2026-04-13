@@ -55,15 +55,13 @@ export class VobizService {
 
   /**
    * Generate XML for inbound/outbound call — streams audio to our WebSocket.
-   * Vobiz (Plivo-based) uses <URL> as child element, not url attribute.
+   * Trying url attribute format (Plivo/Vobiz original format).
    */
   generateInboundXML(callId: string): string {
     const wsUrl = `wss://${new URL(config.vobiz.webhookBaseUrl).host}/ws/call/${callId}`;
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Stream keepCallAlive="true" bidirectional="true">
-    <URL>${wsUrl}</URL>
-  </Stream>
+  <Stream url="${wsUrl}" keepCallAlive="true" bidirectional="true"/>
 </Response>`;
   }
 
