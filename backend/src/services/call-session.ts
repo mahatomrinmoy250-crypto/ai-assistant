@@ -115,12 +115,16 @@ export class CallSession {
         this.data.maxDurationMinutes * 60 * 1000
       );
 
-      // Send greeting
+      // Send greeting — if no configured message, Gemini opens the conversation
       if (this.data.greetingMessage) {
         this.gemini.sendText(
           `[Start the call by saying exactly]: ${this.data.greetingMessage}`
         );
         await this.saveMessage('assistant', this.data.greetingMessage);
+      } else {
+        this.gemini.sendText(
+          '[The call just connected. Greet the caller warmly and ask how you can help.]'
+        );
       }
 
       await dispatchWebhookEvent(this.data.workspaceId, 'call.started', {
