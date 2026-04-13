@@ -137,6 +137,8 @@ export class GeminiLiveSession {
           },
         },
       },
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
       // Tool declarations (only when KB is available)
       ...(tools.length > 0 ? { tools } : {}),
     };

@@ -115,8 +115,17 @@ export class CallSession {
         this.data.maxDurationMinutes * 60 * 1000
       );
 
-      // NOTE: sendClientContent/queueGreeting disabled for debugging — testing
-      // whether session stays alive without text injection. Gemini responds via audio.
+      // Queue greeting to be sent after setupComplete
+      if (this.data.greetingMessage) {
+        this.gemini.queueGreeting(
+          `[Start the call by saying exactly]: ${this.data.greetingMessage}`
+        );
+        await this.saveMessage('assistant', this.data.greetingMessage);
+      } else {
+        this.gemini.queueGreeting(
+          '[The call just connected. Greet the caller warmly and ask how you can help.]'
+        );
+      }
 
       await dispatchWebhookEvent(this.data.workspaceId, 'call.started', {
         callId: this.data.callId,
@@ -247,19 +256,22 @@ export class CallSession {
 
     try {
       const l16Base64 = geminiAudioToVobiz(chunk);
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(
-          JSON.stringify({
-            event: 'playAudio',
-            media: {
-              contentType: 'audio/x-l16;rate=8000',
-              sampleRate: 8000,
-              payload: l16Base64,
-            },
-          }),
-          () => setImmediate(() => this.flushAudioQueue())
-        );
+      // Skip empty payloads — tiny Gemini chunks (e.g. 2 bytes) resample to nothing
+      if (!l16Base64 || this.ws.readyState !== WebSocket.OPEN) {
+        setImmediate(() => this.flushAudioQueue());
+        return;
       }
+      this.ws.send(
+        JSON.stringify({
+          event: 'playAudio',
+          media: {
+            contentType: 'audio/x-l16',   // no ;rate= suffix — Vobiz rejects it
+            sampleRate: 8000,
+            payload: l16Base64,
+          },
+        }),
+        () => setImmediate(() => this.flushAudioQueue())
+      );
     } catch (err) {
       console.error(`[CallSession ${this.data.callId}] Audio send error:`, err);
       this.flushAudioQueue();
