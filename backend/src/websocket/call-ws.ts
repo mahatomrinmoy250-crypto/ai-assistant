@@ -48,6 +48,7 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
     console.log(`[WS] New connection for call: ${callId}`);
 
     let session: CallSession | null = null;
+    let mediaCount = 0;
 
     ws.on('message', async (data: Buffer) => {
       let message: VobizMediaMessage;
@@ -58,13 +59,18 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
         return;
       }
 
+      // Log every non-media event raw (media would flood)
+      if (message.event !== 'media') {
+        console.log(`[WS ${callId}] RAW ${message.event}:`, JSON.stringify(message).slice(0, 500));
+      }
+
       switch (message.event) {
         case 'connected':
           console.log(`[WS ${callId}] Vobiz media stream connected`);
           break;
 
         case 'start': {
-          const streamSid = message.start?.streamSid;
+          const streamSid = message.start?.streamSid || (message as any).streamSid || (message as any).start_sid;
           console.log(`[WS ${callId}] Stream started, sid: ${streamSid}`);
 
           try {
@@ -111,6 +117,10 @@ export function setupCallWebSocket(wss: WebSocketServer): void {
         }
 
         case 'media': {
+          mediaCount++;
+          if (mediaCount === 1 || mediaCount === 50 || mediaCount % 500 === 0) {
+            console.log(`[WS ${callId}] media chunk #${mediaCount}, payload len: ${message.media?.payload?.length ?? 0}`);
+          }
           const payload = message.media?.payload;
           if (payload && session) {
             session.processAudioChunk(payload);

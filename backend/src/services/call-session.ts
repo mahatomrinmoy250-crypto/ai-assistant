@@ -227,8 +227,17 @@ export class CallSession {
     this.streamSid = sid;
   }
 
+  private audioChunkCount = 0;
+
   private handleGeminiAudio(pcm24kBuffer: Buffer): void {
     if (this.isClosed) return;
+    this.audioChunkCount++;
+    if (this.audioChunkCount === 1 || this.audioChunkCount % 25 === 0) {
+      console.log(
+        `[CallSession ${this.data.callId}] Gemini audio chunk #${this.audioChunkCount}, ` +
+        `bytes: ${pcm24kBuffer.length}, ws.readyState: ${this.ws.readyState}`
+      );
+    }
     this.audioQueue.push(pcm24kBuffer);
     if (!this.isSending) this.flushAudioQueue();
   }
